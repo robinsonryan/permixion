@@ -1,0 +1,7 @@
+#!/bin/bash
+
+## Description: Run test suite
+## Usage: test
+## Example: ddev test
+
+ddev exec composer test "$@"

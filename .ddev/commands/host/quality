@@ -1,0 +1,7 @@
+#!/bin/bash
+
+## Description: Run full quality checks (lint, analyze, test)
+## Usage: quality
+## Example: ddev quality
+
+ddev exec composer quality

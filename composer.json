@@ -1,0 +1,74 @@
+{
+    "name": "robinsonryan/permixion",
+    "description": "Role and permission management for Laravel using Taxon",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Ryan Robinson",
+            "email": "ryan@example.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "robinsonryan/taxon": "^1.1|@dev",
+        "illuminate/auth": "^11.0|^12.0",
+        "illuminate/contracts": "^11.0|^12.0",
+        "illuminate/support": "^11.0|^12.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^2.9",
+        "laravel/pint": "^1.18",
+        "orchestra/testbench": "^9.0|^10.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../taxon"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "RobinsonRyan\\Permixion\\": "src/"
+        },
+        "files": [
+            "src/helpers.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "RobinsonRyan\\Permixion\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "RobinsonRyan\\Permixion\\PermixionServiceProvider"
+            ],
+            "aliases": {
+                "Permixion": "RobinsonRyan\\Permixion\\Facades\\Permixion"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "scripts": {
+        "test": "pest",
+        "lint": "pint",
+        "lint:check": "pint --test",
+        "analyze": "phpstan analyse",
+        "quality": [
+            "@lint:check",
+            "@analyze",
+            "@test"
+        ]
+    }
+}
