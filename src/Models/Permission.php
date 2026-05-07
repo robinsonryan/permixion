@@ -32,7 +32,7 @@ class Permission
     public function assignToRole(string|Role $role): static
     {
         $roleObj = $role instanceof Role ? $role : app('permixion')->findRoleOrFail($role);
-        $roleObj->givePermissionTo($this->slug);
+        $roleObj->givePermissionTo($this->name);
 
         return $this;
     }
@@ -40,7 +40,7 @@ class Permission
     public function removeFromRole(string|Role $role): static
     {
         $roleObj = $role instanceof Role ? $role : app('permixion')->findRoleOrFail($role);
-        $roleObj->revokePermissionTo($this->slug);
+        $roleObj->revokePermissionTo($this->name);
 
         return $this;
     }

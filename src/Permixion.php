@@ -4,14 +4,14 @@ namespace RobinsonRyan\Permixion;
 
 use Illuminate\Contracts\Auth\Access\Authorizable;
 use Illuminate\Support\Facades\Cache;
-use RobinsonRyan\Taxon\Contracts\Scope;
-use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Permixion\Exceptions\PermissionAlreadyExists;
 use RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist;
 use RobinsonRyan\Permixion\Exceptions\RoleAlreadyExists;
 use RobinsonRyan\Permixion\Exceptions\RoleDoesNotExist;
 use RobinsonRyan\Permixion\Models\Permission;
 use RobinsonRyan\Permixion\Models\Role;
+use RobinsonRyan\Taxon\Contracts\Scope;
+use RobinsonRyan\Taxon\Models\Tag;
 
 class Permixion
 {
@@ -19,22 +19,30 @@ class Permixion
     |--------------------------------------------------------------------------
     | Role Management
     |--------------------------------------------------------------------------
+    |
+    | Roles and permissions are identified by Tag.name (verbatim), not slug.
+    | This preserves delimiter-bearing identifiers like 'posts.create' that
+    | Str::slug would otherwise mangle.
     */
 
     public function createRole(string $name, array $permissions = []): Role
     {
         $category = $this->rolesCategory();
-        $slug = str()->slug($name);
 
-        if ($category->children()->where('slug', $slug)->exists()) {
+        if ($category->children()->where('name', $name)->exists()) {
             if (config('permixion.strict')) {
                 throw new RoleAlreadyExists($name);
             }
 
-            return $this->findRole($name);
+            return $this->findRoleOrFail($name);
         }
 
-        $tag = $category->addChild($name);
+        $tag = Tag::create([
+            'name' => $name,
+            'slug' => str()->slug($name),
+            'parent_id' => $category->id,
+            'assignable' => true,
+        ]);
 
         $role = new Role($tag);
 
@@ -49,8 +57,9 @@ class Permixion
 
     public function findRole(string $name): ?Role
     {
-        $tag = Tag::inCategory($this->rolesCategorySlug())
-            ->where('slug', str()->slug($name))
+        $tag = $this->rolesCategory()
+            ->children()
+            ->where('name', $name)
             ->first();
 
         return $tag ? new Role($tag) : null;
@@ -104,17 +113,21 @@ class Permixion
     public function createPermission(string $name): Permission
     {
         $category = $this->permissionsCategory();
-        $slug = str()->slug($name);
 
-        if ($category->children()->where('slug', $slug)->exists()) {
+        if ($category->children()->where('name', $name)->exists()) {
             if (config('permixion.strict')) {
                 throw new PermissionAlreadyExists($name);
             }
 
-            return $this->findPermission($name);
+            return $this->findPermissionOrFail($name);
         }
 
-        $tag = $category->addChild($name);
+        $tag = Tag::create([
+            'name' => $name,
+            'slug' => str()->slug($name),
+            'parent_id' => $category->id,
+            'assignable' => true,
+        ]);
 
         $this->clearCache();
 
@@ -123,8 +136,9 @@ class Permixion
 
     public function findPermission(string $name): ?Permission
     {
-        $tag = Tag::inCategory($this->permissionsCategorySlug())
-            ->where('slug', str()->slug($name))
+        $tag = $this->permissionsCategory()
+            ->children()
+            ->where('name', $name)
             ->first();
 
         return $tag ? new Permission($tag) : null;
@@ -199,10 +213,12 @@ class Permixion
             return [];
         }
 
+        $permissionsCategoryId = $this->permissionsCategory()->id;
+
         return $role->tag()
             ->tags()
-            ->whereHas('parent', fn ($q) => $q->where('slug', $this->permissionsCategorySlug()))
-            ->pluck('slug')
+            ->where('parent_id', $permissionsCategoryId)
+            ->pluck('name')
             ->all();
     }
 
@@ -224,9 +240,8 @@ class Permixion
 
         $delimiter = config('permixion.wildcards.delimiter', '.');
 
-        // Check if pattern is a wildcard
         if (str_ends_with($pattern, "{$delimiter}*")) {
-            $prefix = substr($pattern, 0, -1); // Remove '*'
+            $prefix = substr($pattern, 0, -1);
 
             return str_starts_with($permission, $prefix);
         }
@@ -239,35 +254,259 @@ class Permixion
         string $permission,
         ?Scope $scope = null
     ): bool {
-        if (! method_exists($user, 'getTagValueIn')) {
+        if (! method_exists($user, 'tags')) {
             return false;
         }
 
-        // Get user's role in scope
-        $roleSlug = $user->getTagValueIn($this->rolesCategorySlug(), scope: $scope);
+        $roleNames = $this->getUserRoleNames($user, $scope);
 
-        if (! $roleSlug) {
-            // Check direct permissions
-            return $user->hasTagIn($this->permissionsCategorySlug(), $permission, scope: $scope);
-        }
+        foreach ($roleNames as $roleName) {
+            $rolePermissions = $this->getPermissionsForRole($roleName);
 
-        // Get permissions for role
-        $rolePermissions = $this->getPermissionsForRole($roleSlug);
-
-        // Check exact match
-        if (in_array($permission, $rolePermissions, true)) {
-            return true;
-        }
-
-        // Check wildcard matches
-        foreach ($rolePermissions as $rolePermission) {
-            if ($this->permissionMatches($permission, $rolePermission)) {
+            if (in_array($permission, $rolePermissions, true)) {
                 return true;
+            }
+
+            foreach ($rolePermissions as $rolePermission) {
+                if ($this->permissionMatches($permission, $rolePermission)) {
+                    return true;
+                }
             }
         }
 
-        // Check direct permissions as fallback
-        return $user->hasTagIn($this->permissionsCategorySlug(), $permission, scope: $scope);
+        return $this->userHasDirectPermission($user, $permission, $scope);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | User-Tag Operations (name-based, bypassing HasTags slug logic)
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * @return array<int, string>
+     */
+    public function getUserRoleNames(Authorizable $user, ?Scope $scope = null): array
+    {
+        if (! method_exists($user, 'tags')) {
+            return [];
+        }
+
+        $categoryId = $this->rolesCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+
+        $query = $user->tags()->where('parent_id', $categoryId);
+        $this->applyScopeToPivot($query, $pivotTable, $scope);
+
+        return $query->pluck('name')->all();
+    }
+
+    public function userHasRole(Authorizable $user, string $roleName, ?Scope $scope = null): bool
+    {
+        if (! method_exists($user, 'tags')) {
+            return false;
+        }
+
+        $categoryId = $this->rolesCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+
+        $query = $user->tags()
+            ->where('parent_id', $categoryId)
+            ->where('name', $roleName);
+
+        $this->applyScopeToPivot($query, $pivotTable, $scope);
+
+        return $query->exists();
+    }
+
+    public function attachRoleToUser(Authorizable $user, string $roleName, ?Scope $scope = null): void
+    {
+        if (! method_exists($user, 'tags')) {
+            return;
+        }
+
+        if (config('permixion.strict')) {
+            $this->findRoleOrFail($roleName);
+            $tag = $this->findRoleOrFail($roleName)->tag();
+        } else {
+            $tag = $this->findRole($roleName)?->tag()
+                ?? $this->createRole($roleName)->tag();
+        }
+
+        if ($this->userTagPivotExists($user, $tag->id, $scope)) {
+            return;
+        }
+
+        $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+    }
+
+    public function detachRoleFromUser(Authorizable $user, string $roleName, ?Scope $scope = null): void
+    {
+        if (! method_exists($user, 'tags')) {
+            return;
+        }
+
+        $tag = $this->findRole($roleName)?->tag();
+
+        if (! $tag) {
+            return;
+        }
+
+        $this->deleteUserTagPivot($user, $tag->id, $scope);
+    }
+
+    public function detachAllUserRoles(Authorizable $user, ?Scope $scope = null): void
+    {
+        if (! method_exists($user, 'tags')) {
+            return;
+        }
+
+        $categoryId = $this->rolesCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+
+        $query = $user->tags()->where('parent_id', $categoryId);
+        $this->applyScopeToPivot($query, $pivotTable, $scope);
+
+        foreach ($query->get() as $tag) {
+            $this->deleteUserTagPivot($user, $tag->id, $scope);
+        }
+    }
+
+    public function userHasDirectPermission(Authorizable $user, string $permissionName, ?Scope $scope = null): bool
+    {
+        if (! method_exists($user, 'tags')) {
+            return false;
+        }
+
+        $categoryId = $this->permissionsCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+
+        $query = $user->tags()
+            ->where('parent_id', $categoryId)
+            ->where('name', $permissionName);
+
+        $this->applyScopeToPivot($query, $pivotTable, $scope);
+
+        return $query->exists();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public function getUserDirectPermissionNames(Authorizable $user, ?Scope $scope = null): array
+    {
+        if (! method_exists($user, 'tags')) {
+            return [];
+        }
+
+        $categoryId = $this->permissionsCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+
+        $query = $user->tags()->where('parent_id', $categoryId);
+        $this->applyScopeToPivot($query, $pivotTable, $scope);
+
+        return $query->pluck('name')->all();
+    }
+
+    public function attachPermissionToUser(Authorizable $user, string $permissionName, ?Scope $scope = null): void
+    {
+        if (! method_exists($user, 'tags')) {
+            return;
+        }
+
+        if (config('permixion.strict')) {
+            $tag = $this->findPermissionOrFail($permissionName)->tag();
+        } else {
+            $tag = $this->findPermission($permissionName)?->tag()
+                ?? $this->createPermission($permissionName)->tag();
+        }
+
+        if ($this->userTagPivotExists($user, $tag->id, $scope)) {
+            return;
+        }
+
+        $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+    }
+
+    public function detachPermissionFromUser(Authorizable $user, string $permissionName, ?Scope $scope = null): void
+    {
+        if (! method_exists($user, 'tags')) {
+            return;
+        }
+
+        $tag = $this->findPermission($permissionName)?->tag();
+
+        if (! $tag) {
+            return;
+        }
+
+        $this->deleteUserTagPivot($user, $tag->id, $scope);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pivot Helpers
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * @return array<string, string|int|null>
+     */
+    protected function scopePivotData(?Scope $scope): array
+    {
+        return $scope ? [
+            'scope_type' => $scope->getScopeType(),
+            'scope_id' => $scope->getScopeId(),
+        ] : [];
+    }
+
+    protected function applyScopeToPivot(mixed $query, string $pivotTable, ?Scope $scope): void
+    {
+        if ($scope !== null) {
+            $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                ->where("{$pivotTable}.scope_id", $scope->getScopeId());
+
+            return;
+        }
+
+        $query->whereNull("{$pivotTable}.scope_type")
+            ->whereNull("{$pivotTable}.scope_id");
+    }
+
+    protected function userTagPivotExists(Authorizable $user, int|string $tagId, ?Scope $scope): bool
+    {
+        $query = $user->tags()->newPivotStatement()
+            ->where('tag_id', $tagId)
+            ->where('taggable_type', $user->getMorphClass())
+            ->where('taggable_id', $user->getKey());
+
+        if ($scope !== null) {
+            $query->where('scope_type', $scope->getScopeType())
+                ->where('scope_id', $scope->getScopeId());
+        } else {
+            $query->whereNull('scope_type')
+                ->whereNull('scope_id');
+        }
+
+        return $query->exists();
+    }
+
+    protected function deleteUserTagPivot(Authorizable $user, int|string $tagId, ?Scope $scope): void
+    {
+        $query = $user->tags()->newPivotStatement()
+            ->where('tag_id', $tagId)
+            ->where('taggable_type', $user->getMorphClass())
+            ->where('taggable_id', $user->getKey());
+
+        if ($scope !== null) {
+            $query->where('scope_type', $scope->getScopeType())
+                ->where('scope_id', $scope->getScopeId());
+        } else {
+            $query->whereNull('scope_type')
+                ->whereNull('scope_id');
+        }
+
+        $query->delete();
     }
 
     /*
@@ -301,19 +540,16 @@ class Permixion
             return null;
         }
 
-        // If it's already a model implementing Scope
         if ($team instanceof Scope) {
             return $team;
         }
 
-        // If using tag category for teams
         if ($tagCategory = $config['tag_category'] ?? null) {
             return Tag::inCategory($tagCategory)
                 ->where('slug', $team)
                 ->first();
         }
 
-        // If using team model
         if ($modelClass = $config['model'] ?? null) {
             return $modelClass::find($team);
         }
@@ -330,12 +566,10 @@ class Permixion
             return null;
         }
 
-        // If using tag category for teams
         if ($tagCategory = $config['tag_category'] ?? null) {
             return Tag::inCategory($tagCategory)->find($teamId);
         }
 
-        // If using team model
         if ($modelClass = $config['model'] ?? null) {
             return $modelClass::find($teamId);
         }
@@ -418,10 +652,9 @@ class Permixion
         $prefix = config('permixion.cache.key_prefix', 'permixion');
         Cache::store($this->cacheStore())->forget($prefix);
 
-        // Clear all role permission caches
         foreach ($this->getAllRoles() as $role) {
             Cache::store($this->cacheStore())
-                ->forget($this->cacheKey("role_permissions.{$role->slug}"));
+                ->forget($this->cacheKey("role_permissions.{$role->name}"));
         }
     }
 }

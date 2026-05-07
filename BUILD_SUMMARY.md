@@ -26,7 +26,7 @@ First, extended the Taxon package with scoped assignments support:
 ### 2. Permixion Package Structure
 
 ```
-permixon/
+permixion/
 ├── config/
 │   └── permixion.php                    # Package configuration
 ├── src/

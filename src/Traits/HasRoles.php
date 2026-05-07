@@ -3,10 +3,16 @@
 namespace RobinsonRyan\Permixion\Traits;
 
 use Illuminate\Support\Collection;
-use RobinsonRyan\Taxon\Contracts\Scope;
 use RobinsonRyan\Permixion\Models\Permission;
 use RobinsonRyan\Permixion\Models\Role;
+use RobinsonRyan\Taxon\Contracts\Scope;
 
+/**
+ * HasRoles uses Tag.name (verbatim) as the identity for roles and
+ * permissions. It deliberately bypasses Taxon's HasTags helpers
+ * (addTag/hasTagIn/etc.) because those slug their input via Str::slug,
+ * which would mangle delimiter-bearing identifiers like 'posts.create'.
+ */
 trait HasRoles
 {
     /*
@@ -16,57 +22,43 @@ trait HasRoles
     */
 
     /**
-     * Assign a role to the user.
-     *
-     * @param  string|Role|array  $roles
-     * @param  Scope|null  $scope  Team/context scope
+     * @param  string|Role|array<int, string|Role>  $roles
      */
     public function assignRole(string|Role|array $roles, ?Scope $scope = null): static
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
         $roles = is_array($roles) ? $roles : [$roles];
-        $categorySlug = config('permixion.categories.roles', 'roles');
 
         foreach ($roles as $role) {
-            $roleName = $role instanceof Role ? $role->slug : $role;
-
-            // Validate role exists
-            if (config('permixion.strict')) {
-                app('permixion')->findRoleOrFail($roleName);
-            }
-
-            $this->addTag($categorySlug, $roleName, scope: $scope);
+            $roleName = $role instanceof Role ? $role->name : $role;
+            app('permixion')->attachRoleToUser($this, $roleName, $scope);
         }
 
         return $this;
     }
 
-    /**
-     * Remove a role from the user.
-     */
     public function removeRole(string|Role $role, ?Scope $scope = null): static
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
-        $roleName = $role instanceof Role ? $role->slug : $role;
-        $categorySlug = config('permixion.categories.roles', 'roles');
+        $roleName = $role instanceof Role ? $role->name : $role;
 
-        $this->removeTag($categorySlug, $roleName, scope: $scope);
+        app('permixion')->detachRoleFromUser($this, $roleName, $scope);
 
         return $this;
     }
 
     /**
-     * Sync roles - remove all current roles and assign new ones.
+     * @param  array<int, string|Role>  $roles
      */
     public function syncRoles(array $roles, ?Scope $scope = null): static
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
-        $categorySlug = config('permixion.categories.roles', 'roles');
 
-        $this->removeTagsIn($categorySlug, scope: $scope);
+        app('permixion')->detachAllUserRoles($this, $scope);
 
         foreach ($roles as $role) {
-            $this->assignRole($role, $scope);
+            $roleName = $role instanceof Role ? $role->name : $role;
+            app('permixion')->attachRoleToUser($this, $roleName, $scope);
         }
 
         return $this;
@@ -78,20 +70,16 @@ trait HasRoles
     |--------------------------------------------------------------------------
     */
 
-    /**
-     * Check if user has a role.
-     */
     public function hasRole(string|Role $role, ?Scope $scope = null): bool
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
-        $roleName = $role instanceof Role ? $role->slug : str()->slug($role);
-        $categorySlug = config('permixion.categories.roles', 'roles');
+        $roleName = $role instanceof Role ? $role->name : $role;
 
-        return $this->hasTagIn($categorySlug, $roleName, scope: $scope);
+        return app('permixion')->userHasRole($this, $roleName, $scope);
     }
 
     /**
-     * Check if user has any of the given roles.
+     * @param  array<int, string|Role>  $roles
      */
     public function hasAnyRole(array $roles, ?Scope $scope = null): bool
     {
@@ -105,7 +93,7 @@ trait HasRoles
     }
 
     /**
-     * Check if user has all of the given roles.
+     * @param  array<int, string|Role>  $roles
      */
     public function hasAllRoles(array $roles, ?Scope $scope = null): bool
     {
@@ -119,19 +107,23 @@ trait HasRoles
     }
 
     /**
-     * Check if user has exactly the given roles (no more, no less).
+     * @param  array<int, string|Role>  $roles
      */
     public function hasExactRoles(array $roles, ?Scope $scope = null): bool
     {
         $currentRoles = $this->getRoleNames($scope);
 
-        if (count($currentRoles) !== count($roles)) {
+        $expected = array_map(
+            fn ($r) => $r instanceof Role ? $r->name : $r,
+            $roles,
+        );
+
+        if (count($currentRoles) !== count($expected)) {
             return false;
         }
 
-        $roles = array_map(fn ($r) => str()->slug($r), $roles);
-
-        return empty(array_diff($currentRoles, $roles)) && empty(array_diff($roles, $currentRoles));
+        return empty(array_diff($currentRoles, $expected))
+            && empty(array_diff($expected, $currentRoles));
     }
 
     /*
@@ -140,24 +132,31 @@ trait HasRoles
     |--------------------------------------------------------------------------
     */
 
-    /**
-     * Get all roles for the user.
-     */
     public function getRoles(?Scope $scope = null): Collection
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
-        $categorySlug = config('permixion.categories.roles', 'roles');
+        $categoryId = app('permixion')->rolesCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $this->tagsIn($categorySlug, scope: $scope)
-            ->map(fn ($tag) => new Role($tag));
+        $query = $this->tags()->where('parent_id', $categoryId);
+
+        if ($scope !== null) {
+            $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                ->where("{$pivotTable}.scope_id", $scope->getScopeId());
+        } else {
+            $query->whereNull("{$pivotTable}.scope_type")
+                ->whereNull("{$pivotTable}.scope_id");
+        }
+
+        return $query->get()->map(fn ($tag) => new Role($tag));
     }
 
     /**
-     * Get role names as array.
+     * @return array<int, string>
      */
     public function getRoleNames(?Scope $scope = null): array
     {
-        return $this->getRoles($scope)->pluck('slug')->all();
+        return app('permixion')->getUserRoleNames($this, $scope);
     }
 
     /*
@@ -166,18 +165,14 @@ trait HasRoles
     |--------------------------------------------------------------------------
     */
 
-    /**
-     * Check if user has a permission (via roles or direct assignment).
-     */
     public function hasPermissionTo(string|Permission $permission, ?Scope $scope = null): bool
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
-        $permissionName = $permission instanceof Permission ? $permission->slug : $permission;
+        $permissionName = $permission instanceof Permission ? $permission->name : $permission;
 
-        // Check super admin
         if (config('permixion.super_admin.enabled')) {
             $superAdminRole = config('permixion.super_admin.role');
-            if ($this->hasRole($superAdminRole, $scope)) {
+            if ($superAdminRole !== null && $this->hasRole($superAdminRole, $scope)) {
                 return true;
             }
         }
@@ -186,7 +181,7 @@ trait HasRoles
     }
 
     /**
-     * Check if user has any of the given permissions.
+     * @param  array<int, string|Permission>  $permissions
      */
     public function hasAnyPermission(array $permissions, ?Scope $scope = null): bool
     {
@@ -200,7 +195,7 @@ trait HasRoles
     }
 
     /**
-     * Check if user has all of the given permissions.
+     * @param  array<int, string|Permission>  $permissions
      */
     public function hasAllPermissions(array $permissions, ?Scope $scope = null): bool
     {
@@ -218,7 +213,6 @@ trait HasRoles
      */
     public function can($ability, $arguments = []): bool
     {
-        // If arguments include a scope, use it
         $scope = null;
         if (! empty($arguments) && $arguments[0] instanceof Scope) {
             $scope = $arguments[0];
@@ -228,7 +222,6 @@ trait HasRoles
             return true;
         }
 
-        // Fall back to parent can() if it exists
         if (method_exists(parent::class, 'can')) {
             return parent::can($ability, $arguments);
         }
@@ -243,73 +236,67 @@ trait HasRoles
     */
 
     /**
-     * Give a permission directly to the user (not via role).
+     * @param  string|Permission|array<int, string|Permission>  $permissions
      */
     public function givePermissionTo(string|Permission|array $permissions, ?Scope $scope = null): static
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
         $permissions = is_array($permissions) ? $permissions : [$permissions];
-        $categorySlug = config('permixion.categories.permissions', 'permissions');
 
         foreach ($permissions as $permission) {
-            $permissionName = $permission instanceof Permission ? $permission->slug : $permission;
-
-            // Validate permission exists
-            if (config('permixion.strict')) {
-                app('permixion')->findPermissionOrFail($permissionName);
-            }
-
-            $this->addTag($categorySlug, $permissionName, scope: $scope);
+            $permissionName = $permission instanceof Permission ? $permission->name : $permission;
+            app('permixion')->attachPermissionToUser($this, $permissionName, $scope);
         }
 
         return $this;
     }
 
     /**
-     * Revoke a direct permission from the user.
+     * @param  string|Permission|array<int, string|Permission>  $permissions
      */
     public function revokePermissionTo(string|Permission|array $permissions, ?Scope $scope = null): static
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
         $permissions = is_array($permissions) ? $permissions : [$permissions];
-        $categorySlug = config('permixion.categories.permissions', 'permissions');
 
         foreach ($permissions as $permission) {
-            $permissionName = $permission instanceof Permission ? $permission->slug : $permission;
-            $this->removeTag($categorySlug, $permissionName, scope: $scope);
+            $permissionName = $permission instanceof Permission ? $permission->name : $permission;
+            app('permixion')->detachPermissionFromUser($this, $permissionName, $scope);
         }
 
         return $this;
     }
 
-    /**
-     * Get all direct permissions for the user.
-     */
     public function getDirectPermissions(?Scope $scope = null): Collection
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
-        $categorySlug = config('permixion.categories.permissions', 'permissions');
+        $categoryId = app('permixion')->permissionsCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $this->tagsIn($categorySlug, scope: $scope)
-            ->map(fn ($tag) => new Permission($tag));
+        $query = $this->tags()->where('parent_id', $categoryId);
+
+        if ($scope !== null) {
+            $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                ->where("{$pivotTable}.scope_id", $scope->getScopeId());
+        } else {
+            $query->whereNull("{$pivotTable}.scope_type")
+                ->whereNull("{$pivotTable}.scope_id");
+        }
+
+        return $query->get()->map(fn ($tag) => new Permission($tag));
     }
 
-    /**
-     * Get all permissions (from roles + direct).
-     */
     public function getAllPermissions(?Scope $scope = null): Collection
     {
         $scope = $scope ?? app('permixion')->resolveCurrentScope();
 
-        // Get permissions from roles
         $rolePermissions = collect();
         foreach ($this->getRoles($scope) as $role) {
             $rolePermissions = $rolePermissions->merge($role->getPermissions());
         }
 
-        // Get direct permissions
         $directPermissions = $this->getDirectPermissions($scope);
 
-        return $rolePermissions->merge($directPermissions)->unique('slug');
+        return $rolePermissions->merge($directPermissions)->unique('name');
     }
 }

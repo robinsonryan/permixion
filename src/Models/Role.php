@@ -32,19 +32,26 @@ class Role
     public function givePermissionTo(string|array $permissions): static
     {
         $permissions = is_array($permissions) ? $permissions : [$permissions];
+        $strict = (bool) config('permixion.strict');
+
+        $permissionTagIds = [];
 
         foreach ($permissions as $permission) {
             $permissionTag = app('permixion')->findPermission($permission)?->tag();
 
-            if ($permissionTag) {
-                $this->tag->tag($permissionTag->slug);
-            } else {
-                // Auto-create permission if strict mode is off
-                if (! config('permixion.strict')) {
-                    $permissionObj = app('permixion')->createPermission($permission);
-                    $this->tag->tag($permissionObj->slug);
+            if (! $permissionTag) {
+                if ($strict) {
+                    throw new \RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist($permission);
                 }
+
+                $permissionTag = app('permixion')->createPermission($permission)->tag();
             }
+
+            $permissionTagIds[] = $permissionTag->id;
+        }
+
+        if (! empty($permissionTagIds)) {
+            $this->tag->tags()->syncWithoutDetaching($permissionTagIds);
         }
 
         app('permixion')->clearCache();
@@ -56,8 +63,16 @@ class Role
     {
         $permissions = is_array($permissions) ? $permissions : [$permissions];
 
+        $tagIds = [];
         foreach ($permissions as $permission) {
-            $this->tag->untag($permission);
+            $permissionTag = app('permixion')->findPermission($permission)?->tag();
+            if ($permissionTag) {
+                $tagIds[] = $permissionTag->id;
+            }
+        }
+
+        if (! empty($tagIds)) {
+            $this->tag->tags()->detach($tagIds);
         }
 
         app('permixion')->clearCache();
@@ -67,16 +82,17 @@ class Role
 
     public function syncPermissions(array $permissions): static
     {
-        // Remove all current permissions
-        $permissionsCategory = app('permixion')->permissionsCategory();
-        $currentPermissions = $this->tag->tags()
-            ->where('parent_id', $permissionsCategory->id)
-            ->pluck('slug')
+        $permissionsCategoryId = app('permixion')->permissionsCategory()->id;
+
+        $currentPermissionTagIds = $this->tag->tags()
+            ->where('parent_id', $permissionsCategoryId)
+            ->pluck('tags.id')
             ->all();
 
-        $this->tag->untag($currentPermissions);
+        if (! empty($currentPermissionTagIds)) {
+            $this->tag->tags()->detach($currentPermissionTagIds);
+        }
 
-        // Add new permissions
         $this->givePermissionTo($permissions);
 
         return $this;
@@ -84,14 +100,12 @@ class Role
 
     public function hasPermissionTo(string $permission): bool
     {
-        $permissions = app('permixion')->getPermissionsForRole($this->slug);
+        $permissions = app('permixion')->getPermissionsForRole($this->name);
 
-        // Exact match
         if (in_array($permission, $permissions, true)) {
             return true;
         }
 
-        // Wildcard match
         foreach ($permissions as $rolePermission) {
             if (app('permixion')->permissionMatches($permission, $rolePermission)) {
                 return true;
@@ -103,16 +117,19 @@ class Role
 
     public function getPermissions(): Collection
     {
-        $permissionsCategory = app('permixion')->permissionsCategory();
+        $permissionsCategoryId = app('permixion')->permissionsCategory()->id;
 
         return $this->tag->tags()
-            ->where('parent_id', $permissionsCategory->id)
+            ->where('parent_id', $permissionsCategoryId)
             ->get()
             ->map(fn (Tag $tag) => new Permission($tag));
     }
 
+    /**
+     * @return array<int, string>
+     */
     public function getPermissionNames(): array
     {
-        return app('permixion')->getPermissionsForRole($this->slug);
+        return app('permixion')->getPermissionsForRole($this->name);
     }
 }
