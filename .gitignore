@@ -12,3 +12,4 @@ yarn-error.log
 .DS_Store
 composer.lock
 .phpunit.cache
+.workspace
