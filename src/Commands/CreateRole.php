@@ -14,8 +14,11 @@ class CreateRole extends Command
 
     public function handle(): int
     {
+        /** @var string $name */
         $name = $this->argument('name');
-        $permissions = $this->option('permissions');
+
+        /** @var array<int, string> $permissions */
+        $permissions = (array) $this->option('permissions');
 
         try {
             $role = app('permixion')->createRole($name, $permissions);

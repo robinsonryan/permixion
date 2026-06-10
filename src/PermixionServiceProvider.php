@@ -2,15 +2,19 @@
 
 namespace RobinsonRyan\Permixion;
 
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\View\Compilers\BladeCompiler;
 use RobinsonRyan\Permixion\Commands\CreatePermission;
 use RobinsonRyan\Permixion\Commands\CreateRole;
 use RobinsonRyan\Permixion\Commands\ShowPermissions;
+use RobinsonRyan\Permixion\Contracts\HasPermissions;
+use RobinsonRyan\Taxon\Contracts\Scope;
 
 class PermixionServiceProvider extends ServiceProvider
 {
+    #[\Override]
     public function register(): void
     {
         $this->mergeConfigFrom(
@@ -51,7 +55,8 @@ class PermixionServiceProvider extends ServiceProvider
 
     protected function registerMiddleware(): void
     {
-        $router = $this->app['router'];
+        /** @var Router $router */
+        $router = $this->app->make('router');
 
         $router->aliasMiddleware('role', Middleware\RoleMiddleware::class);
         $router->aliasMiddleware('permission', Middleware\PermissionMiddleware::class);
@@ -60,42 +65,35 @@ class PermixionServiceProvider extends ServiceProvider
 
     protected function registerBladeDirectives(): void
     {
-        $this->callAfterResolving('blade.compiler', function (BladeCompiler $blade) {
+        $this->callAfterResolving('blade.compiler', function (BladeCompiler $blade): void {
             // @role('admin') / @role('admin', $team)
-            $blade->if('role', function (string $role, $scope = null) {
-                return auth()->check() && auth()->user()->hasRole($role, $scope);
-            });
+            $blade->if('role', fn (string $role, $scope = null): bool => ($user = $this->permissibleUser()) instanceof HasPermissions && $user->hasRole($role, $scope));
 
             // @hasrole('admin') - alias
-            $blade->if('hasrole', function (string $role, $scope = null) {
-                return auth()->check() && auth()->user()->hasRole($role, $scope);
-            });
+            $blade->if('hasrole', fn (string $role, $scope = null): bool => ($user = $this->permissibleUser()) instanceof HasPermissions && $user->hasRole($role, $scope));
 
             // @hasanyrole(['admin', 'manager'])
-            $blade->if('hasanyrole', function (array $roles, $scope = null) {
-                return auth()->check() && auth()->user()->hasAnyRole($roles, $scope);
-            });
+            $blade->if('hasanyrole', fn (array $roles, $scope = null): bool => ($user = $this->permissibleUser()) instanceof HasPermissions && $user->hasAnyRole($roles, $scope));
 
             // @hasallroles(['admin', 'manager'])
-            $blade->if('hasallroles', function (array $roles, $scope = null) {
-                return auth()->check() && auth()->user()->hasAllRoles($roles, $scope);
-            });
+            $blade->if('hasallroles', fn (array $roles, $scope = null): bool => ($user = $this->permissibleUser()) instanceof HasPermissions && $user->hasAllRoles($roles, $scope));
 
             // @unlessrole('admin')
-            $blade->if('unlessrole', function (string $role, $scope = null) {
-                return ! auth()->check() || ! auth()->user()->hasRole($role, $scope);
-            });
+            $blade->if('unlessrole', fn (string $role, ?Scope $scope = null): bool => ! ($user = $this->permissibleUser()) instanceof HasPermissions || ! $user->hasRole($role, $scope));
 
             // @permission('posts.create')
-            $blade->if('permission', function (string $permission, $scope = null) {
-                return auth()->check() && auth()->user()->hasPermissionTo($permission, $scope);
-            });
+            $blade->if('permission', fn (string $permission, $scope = null): bool => ($user = $this->permissibleUser()) instanceof HasPermissions && $user->hasPermissionTo($permission, $scope));
 
             // @haspermission - alias
-            $blade->if('haspermission', function (string $permission, $scope = null) {
-                return auth()->check() && auth()->user()->hasPermissionTo($permission, $scope);
-            });
+            $blade->if('haspermission', fn (string $permission, $scope = null): bool => ($user = $this->permissibleUser()) instanceof HasPermissions && $user->hasPermissionTo($permission, $scope));
         });
+    }
+
+    protected function permissibleUser(): ?HasPermissions
+    {
+        $user = auth()->user();
+
+        return $user instanceof HasPermissions ? $user : null;
     }
 
     protected function registerGatePermissions(): void
@@ -104,8 +102,8 @@ class PermixionServiceProvider extends ServiceProvider
             return;
         }
 
-        Gate::before(function ($user, string $ability) {
-            if (! method_exists($user, 'hasPermissionTo')) {
+        Gate::before(function ($user, string $ability): ?true {
+            if (! $user instanceof HasPermissions) {
                 return null;
             }
 

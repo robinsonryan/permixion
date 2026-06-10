@@ -12,6 +12,7 @@ use RobinsonRyan\Permixion\Models\Permission;
 use RobinsonRyan\Permixion\Models\Role;
 use RobinsonRyan\Taxon\Contracts\Scope;
 use RobinsonRyan\Taxon\Models\Tag;
+use RobinsonRyan\Taxon\Models\Taggable;
 
 class Permixion
 {
@@ -25,6 +26,9 @@ class Permixion
     | Str::slug would otherwise mangle.
     */
 
+    /**
+     * @param  array<int, string>  $permissions
+     */
     public function createRole(string $name, array $permissions = []): Role
     {
         $category = $this->rolesCategory();
@@ -46,7 +50,7 @@ class Permixion
 
         $role = new Role($tag);
 
-        if (! empty($permissions)) {
+        if ($permissions !== []) {
             $role->givePermissionTo($permissions);
         }
 
@@ -69,7 +73,7 @@ class Permixion
     {
         $role = $this->findRole($name);
 
-        if (! $role) {
+        if (! $role instanceof Role) {
             throw new RoleDoesNotExist($name);
         }
 
@@ -78,15 +82,18 @@ class Permixion
 
     public function roleExists(string $name): bool
     {
-        return $this->findRole($name) !== null;
+        return $this->findRole($name) instanceof Role;
     }
 
+    /**
+     * @return array<int, Role>
+     */
     public function getAllRoles(): array
     {
         return $this->rolesCategory()
             ->children()
             ->get()
-            ->map(fn (Tag $tag) => new Role($tag))
+            ->map(fn (Tag $tag): Role => new Role($tag))
             ->all();
     }
 
@@ -94,7 +101,7 @@ class Permixion
     {
         $role = $this->findRole($name);
 
-        if (! $role) {
+        if (! $role instanceof Role) {
             return false;
         }
 
@@ -148,7 +155,7 @@ class Permixion
     {
         $permission = $this->findPermission($name);
 
-        if (! $permission) {
+        if (! $permission instanceof Permission) {
             throw new PermissionDoesNotExist($name);
         }
 
@@ -157,15 +164,18 @@ class Permixion
 
     public function permissionExists(string $name): bool
     {
-        return $this->findPermission($name) !== null;
+        return $this->findPermission($name) instanceof Permission;
     }
 
+    /**
+     * @return array<int, Permission>
+     */
     public function getAllPermissions(): array
     {
         return $this->permissionsCategory()
             ->children()
             ->get()
-            ->map(fn (Tag $tag) => new Permission($tag))
+            ->map(fn (Tag $tag): Permission => new Permission($tag))
             ->all();
     }
 
@@ -173,7 +183,7 @@ class Permixion
     {
         $permission = $this->findPermission($name);
 
-        if (! $permission) {
+        if (! $permission instanceof Permission) {
             return false;
         }
 
@@ -189,6 +199,9 @@ class Permixion
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * @return array<int, string>
+     */
     public function getPermissionsForRole(string $roleName): array
     {
         if (! config('permixion.cache.enabled')) {
@@ -201,15 +214,18 @@ class Permixion
         return Cache::store($this->cacheStore())->remember(
             $cacheKey,
             $ttl,
-            fn () => $this->fetchPermissionsForRole($roleName)
+            fn (): array => $this->fetchPermissionsForRole($roleName)
         );
     }
 
+    /**
+     * @return array<int, string>
+     */
     protected function fetchPermissionsForRole(string $roleName): array
     {
         $role = $this->findRole($roleName);
 
-        if (! $role) {
+        if (! $role instanceof Role) {
             return [];
         }
 
@@ -348,7 +364,7 @@ class Permixion
 
         $tag = $this->findRole($roleName)?->tag();
 
-        if (! $tag) {
+        if (! $tag instanceof Tag) {
             return;
         }
 
@@ -436,7 +452,7 @@ class Permixion
 
         $tag = $this->findPermission($permissionName)?->tag();
 
-        if (! $tag) {
+        if (! $tag instanceof Tag) {
             return;
         }
 
@@ -454,7 +470,7 @@ class Permixion
      */
     protected function scopePivotData(?Scope $scope): array
     {
-        return $scope ? [
+        return $scope instanceof Scope ? [
             'scope_type' => $scope->getScopeType(),
             'scope_id' => $scope->getScopeId(),
         ] : [];
@@ -462,7 +478,7 @@ class Permixion
 
     protected function applyScopeToPivot(mixed $query, string $pivotTable, ?Scope $scope): void
     {
-        if ($scope !== null) {
+        if ($scope instanceof Scope) {
             $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
                 ->where("{$pivotTable}.scope_id", $scope->getScopeId());
 
@@ -475,12 +491,12 @@ class Permixion
 
     protected function userTagPivotExists(Authorizable $user, int|string $tagId, ?Scope $scope): bool
     {
-        $query = $user->tags()->newPivotStatement()
+        $query = Taggable::query()
             ->where('tag_id', $tagId)
             ->where('taggable_type', $user->getMorphClass())
             ->where('taggable_id', $user->getKey());
 
-        if ($scope !== null) {
+        if ($scope instanceof Scope) {
             $query->where('scope_type', $scope->getScopeType())
                 ->where('scope_id', $scope->getScopeId());
         } else {
@@ -493,12 +509,12 @@ class Permixion
 
     protected function deleteUserTagPivot(Authorizable $user, int|string $tagId, ?Scope $scope): void
     {
-        $query = $user->tags()->newPivotStatement()
+        $query = Taggable::query()
             ->where('tag_id', $tagId)
             ->where('taggable_type', $user->getMorphClass())
             ->where('taggable_id', $user->getKey());
 
-        if ($scope !== null) {
+        if ($scope instanceof Scope) {
             $query->where('scope_type', $scope->getScopeType())
                 ->where('scope_id', $scope->getScopeId());
         } else {
@@ -531,6 +547,9 @@ class Permixion
         };
     }
 
+    /**
+     * @param  array<string, mixed>  $config
+     */
     protected function resolveFromRoute(array $config): ?Scope
     {
         $paramName = $config['route_parameter'] ?? 'team';
@@ -545,18 +564,25 @@ class Permixion
         }
 
         if ($tagCategory = $config['tag_category'] ?? null) {
-            return Tag::inCategory($tagCategory)
+            $tag = Tag::inCategory($tagCategory)
                 ->where('slug', $team)
                 ->first();
+
+            return $tag instanceof Scope ? $tag : null;
         }
 
         if ($modelClass = $config['model'] ?? null) {
-            return $modelClass::find($team);
+            $model = $modelClass::find($team);
+
+            return $model instanceof Scope ? $model : null;
         }
 
         return null;
     }
 
+    /**
+     * @param  array<string, mixed>  $config
+     */
     protected function resolveFromSession(array $config): ?Scope
     {
         $sessionKey = $config['session_key'] ?? 'current_team_id';
@@ -567,16 +593,23 @@ class Permixion
         }
 
         if ($tagCategory = $config['tag_category'] ?? null) {
-            return Tag::inCategory($tagCategory)->find($teamId);
+            $tag = Tag::inCategory($tagCategory)->find($teamId);
+
+            return $tag instanceof Scope ? $tag : null;
         }
 
         if ($modelClass = $config['model'] ?? null) {
-            return $modelClass::find($teamId);
+            $model = $modelClass::find($teamId);
+
+            return $model instanceof Scope ? $model : null;
         }
 
         return null;
     }
 
+    /**
+     * @param  array<string, mixed>  $config
+     */
     protected function resolveFromCallback(array $config): ?Scope
     {
         $callback = $config['callback'] ?? null;

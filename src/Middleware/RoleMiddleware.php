@@ -23,7 +23,7 @@ class RoleMiddleware
         $scope = app('permixion')->resolveCurrentScope();
 
         if (! $user->hasAnyRole($roles, $scope)) {
-            throw UnauthorizedException::forRoles($roles);
+            throw UnauthorizedException::forRoles(array_values($roles));
         }
 
         return $next($request);

@@ -4,4 +4,9 @@ includes:
 parameters:
     paths:
         - src
-    level: 5
+    level: 8
+    ignoreErrors:
+        -
+            # Consumer-facing trait (apps `use HasRoles` on their User model); never used inside src.
+            identifier: trait.unused
+            path: src/Traits/HasRoles.php

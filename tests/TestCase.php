@@ -5,8 +5,8 @@ namespace RobinsonRyan\Permixion\Tests;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Orchestra\Testbench\TestCase as Orchestra;
-use RobinsonRyan\Taxon\TaxonServiceProvider;
 use RobinsonRyan\Permixion\PermixionServiceProvider;
+use RobinsonRyan\Taxon\TaxonServiceProvider;
 
 abstract class TestCase extends Orchestra
 {
@@ -46,14 +46,14 @@ abstract class TestCase extends Orchestra
         }
 
         // Create test tables
-        Schema::create('users', function (Blueprint $table) {
+        Schema::create('users', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
             $table->string('email');
             $table->timestamps();
         });
 
-        Schema::create('teams', function (Blueprint $table) {
+        Schema::create('teams', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
             $table->timestamps();

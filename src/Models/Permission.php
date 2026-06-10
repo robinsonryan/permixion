@@ -45,6 +45,9 @@ class Permission
         return $this;
     }
 
+    /**
+     * @return Collection<int, Role>
+     */
     public function getRoles(): Collection
     {
         $rolesCategory = app('permixion')->rolesCategory();
@@ -53,6 +56,6 @@ class Permission
         return Tag::where('parent_id', $rolesCategory->id)
             ->whereHas('tags', fn ($q) => $q->where('id', $this->tag->id))
             ->get()
-            ->map(fn (Tag $tag) => new Role($tag));
+            ->map(fn (Tag $tag): Role => new Role($tag));
     }
 }

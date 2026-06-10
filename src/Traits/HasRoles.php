@@ -26,7 +26,7 @@ trait HasRoles
      */
     public function assignRole(string|Role|array $roles, ?Scope $scope = null): static
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $roles = is_array($roles) ? $roles : [$roles];
 
         foreach ($roles as $role) {
@@ -39,7 +39,7 @@ trait HasRoles
 
     public function removeRole(string|Role $role, ?Scope $scope = null): static
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $roleName = $role instanceof Role ? $role->name : $role;
 
         app('permixion')->detachRoleFromUser($this, $roleName, $scope);
@@ -52,7 +52,7 @@ trait HasRoles
      */
     public function syncRoles(array $roles, ?Scope $scope = null): static
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
 
         app('permixion')->detachAllUserRoles($this, $scope);
 
@@ -72,7 +72,7 @@ trait HasRoles
 
     public function hasRole(string|Role $role, ?Scope $scope = null): bool
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $roleName = $role instanceof Role ? $role->name : $role;
 
         return app('permixion')->userHasRole($this, $roleName, $scope);
@@ -114,7 +114,7 @@ trait HasRoles
         $currentRoles = $this->getRoleNames($scope);
 
         $expected = array_map(
-            fn ($r) => $r instanceof Role ? $r->name : $r,
+            fn (\RobinsonRyan\Permixion\Models\Role|string $r): string => $r instanceof Role ? $r->name : $r,
             $roles,
         );
 
@@ -122,8 +122,8 @@ trait HasRoles
             return false;
         }
 
-        return empty(array_diff($currentRoles, $expected))
-            && empty(array_diff($expected, $currentRoles));
+        return array_diff($currentRoles, $expected) === []
+            && array_diff($expected, $currentRoles) === [];
     }
 
     /*
@@ -134,7 +134,7 @@ trait HasRoles
 
     public function getRoles(?Scope $scope = null): Collection
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $categoryId = app('permixion')->rolesCategory()->id;
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
@@ -148,7 +148,7 @@ trait HasRoles
                 ->whereNull("{$pivotTable}.scope_id");
         }
 
-        return $query->get()->map(fn ($tag) => new Role($tag));
+        return $query->get()->map(fn ($tag): Role => new Role($tag));
     }
 
     /**
@@ -167,7 +167,7 @@ trait HasRoles
 
     public function hasPermissionTo(string|Permission $permission, ?Scope $scope = null): bool
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $permissionName = $permission instanceof Permission ? $permission->name : $permission;
 
         if (config('permixion.super_admin.enabled')) {
@@ -240,7 +240,7 @@ trait HasRoles
      */
     public function givePermissionTo(string|Permission|array $permissions, ?Scope $scope = null): static
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $permissions = is_array($permissions) ? $permissions : [$permissions];
 
         foreach ($permissions as $permission) {
@@ -256,7 +256,7 @@ trait HasRoles
      */
     public function revokePermissionTo(string|Permission|array $permissions, ?Scope $scope = null): static
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $permissions = is_array($permissions) ? $permissions : [$permissions];
 
         foreach ($permissions as $permission) {
@@ -269,7 +269,7 @@ trait HasRoles
 
     public function getDirectPermissions(?Scope $scope = null): Collection
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
         $categoryId = app('permixion')->permissionsCategory()->id;
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
@@ -283,12 +283,12 @@ trait HasRoles
                 ->whereNull("{$pivotTable}.scope_id");
         }
 
-        return $query->get()->map(fn ($tag) => new Permission($tag));
+        return $query->get()->map(fn ($tag): Permission => new Permission($tag));
     }
 
     public function getAllPermissions(?Scope $scope = null): Collection
     {
-        $scope = $scope ?? app('permixion')->resolveCurrentScope();
+        $scope ??= app('permixion')->resolveCurrentScope();
 
         $rolePermissions = collect();
         foreach ($this->getRoles($scope) as $role) {

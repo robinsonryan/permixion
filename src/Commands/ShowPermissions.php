@@ -12,9 +12,10 @@ class ShowPermissions extends Command
 
     public function handle(): int
     {
+        /** @var string|null $roleName */
         $roleName = $this->option('role');
 
-        if ($roleName) {
+        if ($roleName !== null && $roleName !== '') {
             return $this->showRolePermissions($roleName);
         }
 
@@ -40,7 +41,7 @@ class ShowPermissions extends Command
         }
 
         $this->info("Permissions for role '{$roleName}':");
-        $this->table(['Permission'], array_map(fn ($p) => [$p], $permissions));
+        $this->table(['Permission'], array_map(fn ($p): array => [$p], $permissions));
 
         return self::SUCCESS;
     }
@@ -53,7 +54,7 @@ class ShowPermissions extends Command
         $this->info('Roles:');
         $this->table(
             ['Role', 'Permissions'],
-            array_map(fn ($r) => [
+            array_map(fn ($r): array => [
                 $r->name,
                 implode(', ', $r->getPermissionNames()),
             ], $roles)
@@ -63,7 +64,7 @@ class ShowPermissions extends Command
         $this->info('All Permissions:');
         $this->table(
             ['Permission'],
-            array_map(fn ($p) => [$p->name], $permissions)
+            array_map(fn ($p): array => [$p->name], $permissions)
         );
 
         return self::SUCCESS;

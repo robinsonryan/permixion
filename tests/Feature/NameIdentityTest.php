@@ -11,21 +11,20 @@ use RobinsonRyan\Permixion\Tests\Fixtures\User;
  * 'work_order.assign' → 'work-orderassign'). These tests pin the
  * verbatim-name behavior in place.
  */
-
-beforeEach(function () {
+beforeEach(function (): void {
     $this->user = User::create([
         'name' => 'Test User',
         'email' => 'name-identity@example.com',
     ]);
 });
 
-test('createPermission preserves dotted names verbatim', function () {
+test('createPermission preserves dotted names verbatim', function (): void {
     $permission = Permixion::createPermission('account.view');
 
     expect($permission->name)->toBe('account.view');
 });
 
-test('findPermission round-trips a dotted name', function () {
+test('findPermission round-trips a dotted name', function (): void {
     Permixion::createPermission('work_order.assign');
 
     $found = Permixion::findPermission('work_order.assign');
@@ -34,7 +33,7 @@ test('findPermission round-trips a dotted name', function () {
         ->and($found->name)->toBe('work_order.assign');
 });
 
-test('two permissions with similar slugs are distinct', function () {
+test('two permissions with similar slugs are distinct', function (): void {
     Permixion::createPermission('account.view');
     Permixion::createPermission('accountview');
     Permixion::createPermission('account-view');
@@ -45,7 +44,7 @@ test('two permissions with similar slugs are distinct', function () {
         ->and(count(Permixion::getAllPermissions()))->toBe(3);
 });
 
-test('role.givePermissionTo binds dotted permissions correctly', function () {
+test('role.givePermissionTo binds dotted permissions correctly', function (): void {
     Permixion::createPermission('qc_checklist.complete');
     Permixion::createPermission('work_order.assign');
 
@@ -57,7 +56,7 @@ test('role.givePermissionTo binds dotted permissions correctly', function () {
         ->toContain('work_order.assign');
 });
 
-test('hasPermissionTo works with dotted permission names', function () {
+test('hasPermissionTo works with dotted permission names', function (): void {
     Permixion::createPermission('account.view');
     Permixion::createPermission('account.delete');
 
@@ -69,7 +68,7 @@ test('hasPermissionTo works with dotted permission names', function () {
         ->and($this->user->hasPermissionTo('account.delete'))->toBeFalse();
 });
 
-test('wildcard matches dotted permission names', function () {
+test('wildcard matches dotted permission names', function (): void {
     Permixion::createPermission('reports.view_sales');
     Permixion::createPermission('reports.view_inventory');
     Permixion::createPermission('reports.view_financial');
@@ -86,7 +85,7 @@ test('wildcard matches dotted permission names', function () {
         ->and($this->user->hasPermissionTo('reports.export'))->toBeTrue();
 });
 
-test('createRole preserves verbatim names', function () {
+test('createRole preserves verbatim names', function (): void {
     Permixion::createRole('shop_manager');
 
     $role = Permixion::findRole('shop_manager');
@@ -95,7 +94,7 @@ test('createRole preserves verbatim names', function () {
         ->and($role->name)->toBe('shop_manager');
 });
 
-test('user role names round-trip verbatim', function () {
+test('user role names round-trip verbatim', function (): void {
     Permixion::createRole('shop_manager');
     Permixion::createRole('sales_rep');
 
@@ -106,7 +105,7 @@ test('user role names round-trip verbatim', function () {
         ->toContain('sales_rep');
 });
 
-test('direct permission with dotted name is checkable', function () {
+test('direct permission with dotted name is checkable', function (): void {
     Permixion::createPermission('settings.update');
 
     $this->user->givePermissionTo('settings.update');
@@ -114,7 +113,7 @@ test('direct permission with dotted name is checkable', function () {
     expect($this->user->hasPermissionTo('settings.update'))->toBeTrue();
 });
 
-test('role syncPermissions replaces dotted permissions cleanly', function () {
+test('role syncPermissions replaces dotted permissions cleanly', function (): void {
     Permixion::createPermission('quotes.view');
     Permixion::createPermission('quotes.create');
     Permixion::createPermission('quotes.delete');

@@ -16,6 +16,10 @@ class RoleOrPermissionMiddleware
             throw UnauthorizedException::notLoggedIn();
         }
 
+        if (! method_exists($user, 'hasRole') || ! method_exists($user, 'hasPermissionTo')) {
+            throw UnauthorizedException::missingTrait();
+        }
+
         $scope = app('permixion')->resolveCurrentScope();
 
         foreach ($rolesOrPermissions as $roleOrPermission) {
@@ -28,6 +32,6 @@ class RoleOrPermissionMiddleware
             }
         }
 
-        throw UnauthorizedException::forRolesOrPermissions($rolesOrPermissions);
+        throw UnauthorizedException::forRolesOrPermissions(array_values($rolesOrPermissions));
     }
 }

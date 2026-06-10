@@ -3,7 +3,7 @@
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\Tests\Fixtures\User;
 
-beforeEach(function () {
+beforeEach(function (): void {
     Permixion::createPermission('posts.*');
     Permixion::createPermission('users.view');
 
@@ -13,7 +13,7 @@ beforeEach(function () {
     $this->user = User::create(['name' => 'Test User', 'email' => 'test@example.com']);
 });
 
-test('wildcard permissions match specific permissions', function () {
+test('wildcard permissions match specific permissions', function (): void {
     $this->user->assignRole('editor');
 
     expect($this->user->hasPermissionTo('posts.create'))->toBeTrue()
@@ -22,7 +22,7 @@ test('wildcard permissions match specific permissions', function () {
         ->and($this->user->hasPermissionTo('users.create'))->toBeFalse();
 });
 
-test('exact permission still works', function () {
+test('exact permission still works', function (): void {
     $this->user->assignRole('viewer');
 
     expect($this->user->hasPermissionTo('users.view'))->toBeTrue()

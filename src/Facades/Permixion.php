@@ -1,23 +1,25 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RobinsonRyan\Permixion\Facades;
 
 use Illuminate\Support\Facades\Facade;
 
 /**
- * @method static \RobinsonRyan\Permixion\Models\Role createRole(string $name, array $permissions = [])
+ * @method static \RobinsonRyan\Permixion\Models\Role createRole(string $name, array<int, string> $permissions = [])
  * @method static \RobinsonRyan\Permixion\Models\Role|null findRole(string $name)
  * @method static \RobinsonRyan\Permixion\Models\Role findRoleOrFail(string $name)
  * @method static bool roleExists(string $name)
- * @method static array getAllRoles()
+ * @method static array<int, \RobinsonRyan\Permixion\Models\Role> getAllRoles()
  * @method static bool deleteRole(string $name)
  * @method static \RobinsonRyan\Permixion\Models\Permission createPermission(string $name)
  * @method static \RobinsonRyan\Permixion\Models\Permission|null findPermission(string $name)
  * @method static \RobinsonRyan\Permixion\Models\Permission findPermissionOrFail(string $name)
  * @method static bool permissionExists(string $name)
- * @method static array getAllPermissions()
+ * @method static array<int, \RobinsonRyan\Permixion\Models\Permission> getAllPermissions()
  * @method static bool deletePermission(string $name)
- * @method static array getPermissionsForRole(string $roleName)
+ * @method static array<int, string> getPermissionsForRole(string $roleName)
  * @method static bool permissionMatches(string $permission, string $pattern)
  * @method static bool userHasPermission(\Illuminate\Contracts\Auth\Access\Authorizable $user, string $permission, ?\RobinsonRyan\Taxon\Contracts\Scope $scope = null)
  * @method static \RobinsonRyan\Taxon\Contracts\Scope|null resolveCurrentScope()

@@ -1,0 +1,7 @@
+# Mounts the sibling robinsonryan/taxon package into the web container so the
+# composer PATH repository ("../taxon", resolved relative to /var/www/html)
+# resolves to /var/www/taxon inside the container during local development.
+services:
+  web:
+    volumes:
+      - "../../taxon:/var/www/taxon"

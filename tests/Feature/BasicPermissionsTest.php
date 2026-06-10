@@ -3,7 +3,7 @@
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\Tests\Fixtures\User;
 
-beforeEach(function () {
+beforeEach(function (): void {
     // Create basic roles and permissions
     Permixion::createPermission('posts.create');
     Permixion::createPermission('posts.edit');
@@ -17,27 +17,27 @@ beforeEach(function () {
     $this->user = User::create(['name' => 'Test User', 'email' => 'test@example.com']);
 });
 
-test('user can be assigned a role', function () {
+test('user can be assigned a role', function (): void {
     $this->user->assignRole('editor');
 
     expect($this->user->hasRole('editor'))->toBeTrue();
 });
 
-test('user can have multiple roles', function () {
+test('user can have multiple roles', function (): void {
     $this->user->assignRole(['editor', 'member']);
 
     expect($this->user->hasRole('editor'))->toBeTrue()
         ->and($this->user->hasRole('member'))->toBeTrue();
 });
 
-test('user can remove a role', function () {
+test('user can remove a role', function (): void {
     $this->user->assignRole('editor');
     $this->user->removeRole('editor');
 
     expect($this->user->hasRole('editor'))->toBeFalse();
 });
 
-test('user can sync roles', function () {
+test('user can sync roles', function (): void {
     $this->user->assignRole(['editor', 'member']);
     $this->user->syncRoles(['admin']);
 
@@ -46,7 +46,7 @@ test('user can sync roles', function () {
         ->and($this->user->hasRole('member'))->toBeFalse();
 });
 
-test('user has permissions through role', function () {
+test('user has permissions through role', function (): void {
     $this->user->assignRole('editor');
 
     expect($this->user->hasPermissionTo('posts.create'))->toBeTrue()
@@ -54,27 +54,27 @@ test('user has permissions through role', function () {
         ->and($this->user->hasPermissionTo('posts.delete'))->toBeFalse();
 });
 
-test('user can have direct permissions', function () {
+test('user can have direct permissions', function (): void {
     $this->user->givePermissionTo('posts.delete');
 
     expect($this->user->hasPermissionTo('posts.delete'))->toBeTrue();
 });
 
-test('user can check any permission', function () {
+test('user can check any permission', function (): void {
     $this->user->assignRole('member');
 
     expect($this->user->hasAnyPermission(['posts.create', 'posts.delete']))->toBeTrue()
         ->and($this->user->hasAnyPermission(['posts.edit', 'posts.delete']))->toBeFalse();
 });
 
-test('user can check all permissions', function () {
+test('user can check all permissions', function (): void {
     $this->user->assignRole('editor');
 
     expect($this->user->hasAllPermissions(['posts.create', 'posts.edit']))->toBeTrue()
         ->and($this->user->hasAllPermissions(['posts.create', 'posts.delete']))->toBeFalse();
 });
 
-test('role can give and revoke permissions', function () {
+test('role can give and revoke permissions', function (): void {
     $role = Permixion::findRole('member');
 
     $role->givePermissionTo('posts.edit');
@@ -84,14 +84,14 @@ test('role can give and revoke permissions', function () {
     expect($role->hasPermissionTo('posts.edit'))->toBeFalse();
 });
 
-test('user can check any role', function () {
+test('user can check any role', function (): void {
     $this->user->assignRole('editor');
 
     expect($this->user->hasAnyRole(['admin', 'editor']))->toBeTrue()
         ->and($this->user->hasAnyRole(['admin', 'member']))->toBeFalse();
 });
 
-test('user can check all roles', function () {
+test('user can check all roles', function (): void {
     $this->user->assignRole(['editor', 'member']);
 
     expect($this->user->hasAllRoles(['editor', 'member']))->toBeTrue()

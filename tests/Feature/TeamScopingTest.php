@@ -4,7 +4,7 @@ use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\Tests\Fixtures\Team;
 use RobinsonRyan\Permixion\Tests\Fixtures\User;
 
-beforeEach(function () {
+beforeEach(function (): void {
     Permixion::createPermission('posts.create');
     Permixion::createPermission('posts.delete');
 
@@ -16,7 +16,7 @@ beforeEach(function () {
     $this->teamB = Team::create(['name' => 'Team B']);
 });
 
-test('user can have different roles per team', function () {
+test('user can have different roles per team', function (): void {
     $this->user->assignRole('admin', $this->teamA);
     $this->user->assignRole('member', $this->teamB);
 
@@ -26,7 +26,7 @@ test('user can have different roles per team', function () {
         ->and($this->user->hasRole('admin', $this->teamB))->toBeFalse();
 });
 
-test('user has different permissions per team', function () {
+test('user has different permissions per team', function (): void {
     $this->user->assignRole('admin', $this->teamA);
     $this->user->assignRole('member', $this->teamB);
 
@@ -35,7 +35,7 @@ test('user has different permissions per team', function () {
         ->and($this->user->hasPermissionTo('posts.create', $this->teamB))->toBeTrue();
 });
 
-test('user can remove role from specific team', function () {
+test('user can remove role from specific team', function (): void {
     $this->user->assignRole('admin', $this->teamA);
     $this->user->assignRole('admin', $this->teamB);
 

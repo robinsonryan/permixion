@@ -23,7 +23,7 @@ class PermissionMiddleware
         $scope = app('permixion')->resolveCurrentScope();
 
         if (! $user->hasAnyPermission($permissions, $scope)) {
-            throw UnauthorizedException::forPermissions($permissions);
+            throw UnauthorizedException::forPermissions(array_values($permissions));
         }
 
         return $next($request);

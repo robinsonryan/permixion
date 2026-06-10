@@ -3,6 +3,7 @@
 namespace RobinsonRyan\Permixion\Models;
 
 use Illuminate\Support\Collection;
+use RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist;
 use RobinsonRyan\Taxon\Models\Tag;
 
 class Role
@@ -29,6 +30,9 @@ class Role
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * @param  string|array<int, string|Permission>  $permissions
+     */
     public function givePermissionTo(string|array $permissions): static
     {
         $permissions = is_array($permissions) ? $permissions : [$permissions];
@@ -37,20 +41,21 @@ class Role
         $permissionTagIds = [];
 
         foreach ($permissions as $permission) {
-            $permissionTag = app('permixion')->findPermission($permission)?->tag();
+            $permissionName = $permission instanceof Permission ? $permission->name : $permission;
+            $permissionTag = app('permixion')->findPermission($permissionName)?->tag();
 
             if (! $permissionTag) {
                 if ($strict) {
-                    throw new \RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist($permission);
+                    throw new PermissionDoesNotExist($permissionName);
                 }
 
-                $permissionTag = app('permixion')->createPermission($permission)->tag();
+                $permissionTag = app('permixion')->createPermission($permissionName)->tag();
             }
 
             $permissionTagIds[] = $permissionTag->id;
         }
 
-        if (! empty($permissionTagIds)) {
+        if ($permissionTagIds !== []) {
             $this->tag->tags()->syncWithoutDetaching($permissionTagIds);
         }
 
@@ -59,19 +64,23 @@ class Role
         return $this;
     }
 
+    /**
+     * @param  string|array<int, string|Permission>  $permissions
+     */
     public function revokePermissionTo(string|array $permissions): static
     {
         $permissions = is_array($permissions) ? $permissions : [$permissions];
 
         $tagIds = [];
         foreach ($permissions as $permission) {
-            $permissionTag = app('permixion')->findPermission($permission)?->tag();
+            $permissionName = $permission instanceof Permission ? $permission->name : $permission;
+            $permissionTag = app('permixion')->findPermission($permissionName)?->tag();
             if ($permissionTag) {
                 $tagIds[] = $permissionTag->id;
             }
         }
 
-        if (! empty($tagIds)) {
+        if ($tagIds !== []) {
             $this->tag->tags()->detach($tagIds);
         }
 
@@ -80,6 +89,9 @@ class Role
         return $this;
     }
 
+    /**
+     * @param  array<int, string|Permission>  $permissions
+     */
     public function syncPermissions(array $permissions): static
     {
         $permissionsCategoryId = app('permixion')->permissionsCategory()->id;
@@ -115,6 +127,9 @@ class Role
         return false;
     }
 
+    /**
+     * @return Collection<int, Permission>
+     */
     public function getPermissions(): Collection
     {
         $permissionsCategoryId = app('permixion')->permissionsCategory()->id;
@@ -122,7 +137,7 @@ class Role
         return $this->tag->tags()
             ->where('parent_id', $permissionsCategoryId)
             ->get()
-            ->map(fn (Tag $tag) => new Permission($tag));
+            ->map(fn (Tag $tag): Permission => new Permission($tag));
     }
 
     /**
