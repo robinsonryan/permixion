@@ -79,6 +79,17 @@ trait HasRoles
     }
 
     /**
+     * Whether the user holds the role under ANY scope (including unscoped),
+     * ignoring the current scope context entirely.
+     */
+    public function hasRoleAnywhere(string|Role $role): bool
+    {
+        $roleName = $role instanceof Role ? $role->name : $role;
+
+        return app('permixion')->userHasRoleInAnyScope($this, $roleName);
+    }
+
+    /**
      * @param  array<int, string|Role>  $roles
      */
     public function hasAnyRole(array $roles, ?Scope $scope = null): bool
@@ -139,14 +150,7 @@ trait HasRoles
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
         $query = $this->tags()->where('parent_id', $categoryId);
-
-        if ($scope !== null) {
-            $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
-                ->where("{$pivotTable}.scope_id", $scope->getScopeId());
-        } else {
-            $query->whereNull("{$pivotTable}.scope_type")
-                ->whereNull("{$pivotTable}.scope_id");
-        }
+        app('permixion')->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->get()->map(fn ($tag): Role => new Role($tag));
     }
@@ -274,14 +278,7 @@ trait HasRoles
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
         $query = $this->tags()->where('parent_id', $categoryId);
-
-        if ($scope !== null) {
-            $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
-                ->where("{$pivotTable}.scope_id", $scope->getScopeId());
-        } else {
-            $query->whereNull("{$pivotTable}.scope_type")
-                ->whereNull("{$pivotTable}.scope_id");
-        }
+        app('permixion')->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->get()->map(fn ($tag): Permission => new Permission($tag));
     }

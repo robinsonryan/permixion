@@ -44,6 +44,13 @@ return [
 
         // Custom resolver callback (when resolver is 'callback')
         'callback' => null, // e.g., fn() => app('current.team')
+
+        // When true, role/permission READ checks against a specific scope
+        // also match unscoped (global) assignments — i.e. a role assigned
+        // with no scope applies everywhere, matching spatie/laravel-permission
+        // teams semantics. Writes (assign/remove/sync) always target the
+        // exact scope. Pass GlobalScope::instance() to read global rows only.
+        'global_fallback' => false,
     ],
 
     /*

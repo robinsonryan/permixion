@@ -312,7 +312,7 @@ class Permixion
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
         $query = $user->tags()->where('parent_id', $categoryId);
-        $this->applyScopeToPivot($query, $pivotTable, $scope);
+        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->pluck('name')->all();
     }
@@ -330,9 +330,29 @@ class Permixion
             ->where('parent_id', $categoryId)
             ->where('name', $roleName);
 
-        $this->applyScopeToPivot($query, $pivotTable, $scope);
+        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->exists();
+    }
+
+    /**
+     * Whether the user holds the role under ANY scope (including unscoped).
+     *
+     * Useful for "is this user an admin at all?" checks where the current
+     * scope context is irrelevant.
+     */
+    public function userHasRoleInAnyScope(Authorizable $user, string $roleName): bool
+    {
+        if (! method_exists($user, 'tags')) {
+            return false;
+        }
+
+        $categoryId = $this->rolesCategory()->id;
+
+        return $user->tags()
+            ->where('parent_id', $categoryId)
+            ->where('name', $roleName)
+            ->exists();
     }
 
     public function attachRoleToUser(Authorizable $user, string $roleName, ?Scope $scope = null): void
@@ -401,7 +421,7 @@ class Permixion
             ->where('parent_id', $categoryId)
             ->where('name', $permissionName);
 
-        $this->applyScopeToPivot($query, $pivotTable, $scope);
+        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->exists();
     }
@@ -419,7 +439,7 @@ class Permixion
         $pivotTable = config('taxon.tables.taggables', 'taggables');
 
         $query = $user->tags()->where('parent_id', $categoryId);
-        $this->applyScopeToPivot($query, $pivotTable, $scope);
+        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->pluck('name')->all();
     }
@@ -470,15 +490,21 @@ class Permixion
      */
     protected function scopePivotData(?Scope $scope): array
     {
-        return $scope instanceof Scope ? [
+        return $scope instanceof Scope && ! $scope instanceof GlobalScope ? [
             'scope_type' => $scope->getScopeType(),
             'scope_id' => $scope->getScopeId(),
         ] : [];
     }
 
+    /**
+     * Exact scope matching: a concrete Scope matches only its own rows;
+     * null or GlobalScope matches only unscoped rows. Used by writes
+     * (assign/remove/sync) so they never touch assignments outside the
+     * requested scope.
+     */
     protected function applyScopeToPivot(mixed $query, string $pivotTable, ?Scope $scope): void
     {
-        if ($scope instanceof Scope) {
+        if ($scope instanceof Scope && ! $scope instanceof GlobalScope) {
             $query->where("{$pivotTable}.scope_type", $scope->getScopeType())
                 ->where("{$pivotTable}.scope_id", $scope->getScopeId());
 
@@ -489,6 +515,35 @@ class Permixion
             ->whereNull("{$pivotTable}.scope_id");
     }
 
+    /**
+     * Scope matching for READ checks. Like applyScopeToPivot, but when
+     * teams.global_fallback is enabled a concrete Scope additionally matches
+     * unscoped (global) rows — so a role assigned with no scope applies under
+     * every scope. GlobalScope always reads global rows only.
+     */
+    public function applyReadScopeToPivot(mixed $query, string $pivotTable, ?Scope $scope): void
+    {
+        if (
+            $scope instanceof Scope
+            && ! $scope instanceof GlobalScope
+            && config('permixion.teams.global_fallback', false)
+        ) {
+            $query->where(function ($outer) use ($pivotTable, $scope): void {
+                $outer->where(function ($scoped) use ($pivotTable, $scope): void {
+                    $scoped->where("{$pivotTable}.scope_type", $scope->getScopeType())
+                        ->where("{$pivotTable}.scope_id", $scope->getScopeId());
+                })->orWhere(function ($global) use ($pivotTable): void {
+                    $global->whereNull("{$pivotTable}.scope_type")
+                        ->whereNull("{$pivotTable}.scope_id");
+                });
+            });
+
+            return;
+        }
+
+        $this->applyScopeToPivot($query, $pivotTable, $scope);
+    }
+
     protected function userTagPivotExists(Authorizable $user, int|string $tagId, ?Scope $scope): bool
     {
         $query = Taggable::query()
@@ -496,13 +551,7 @@ class Permixion
             ->where('taggable_type', $user->getMorphClass())
             ->where('taggable_id', $user->getKey());
 
-        if ($scope instanceof Scope) {
-            $query->where('scope_type', $scope->getScopeType())
-                ->where('scope_id', $scope->getScopeId());
-        } else {
-            $query->whereNull('scope_type')
-                ->whereNull('scope_id');
-        }
+        $this->applyScopeToPivot($query, $query->getModel()->getTable(), $scope);
 
         return $query->exists();
     }
@@ -514,13 +563,7 @@ class Permixion
             ->where('taggable_type', $user->getMorphClass())
             ->where('taggable_id', $user->getKey());
 
-        if ($scope instanceof Scope) {
-            $query->where('scope_type', $scope->getScopeType())
-                ->where('scope_id', $scope->getScopeId());
-        } else {
-            $query->whereNull('scope_type')
-                ->whereNull('scope_id');
-        }
+        $this->applyScopeToPivot($query, $query->getModel()->getTable(), $scope);
 
         $query->delete();
     }

@@ -11,3 +11,5 @@ nodejs_version: "22"
 hooks:
   post-start:
     - exec: composer install
+router_http_port: "8680"
+router_https_port: "9043"

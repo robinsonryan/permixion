@@ -117,6 +117,43 @@ if ($user->hasPermissionTo('posts.delete', $team)) {
 }
 ```
 
+#### Global (unscoped) assignments
+
+When a scope resolver is configured, a `null` scope argument means "resolve
+the current scope". To target the **unscoped/global** assignment explicitly,
+pass `GlobalScope::instance()`:
+
+```php
+use RobinsonRyan\Permixion\GlobalScope;
+
+// Assign account-wide, regardless of any resolvable scope
+$user->assignRole('owner', GlobalScope::instance());
+
+// Check global rows only
+$user->hasRole('owner', GlobalScope::instance());
+
+// Check across all scopes (scoped or global), ignoring context
+$user->hasRoleAnywhere('admin');
+```
+
+By default a scoped check matches only that exact scope. Enable
+`teams.global_fallback` to make globally-assigned roles/permissions apply
+under every scope (spatie/laravel-permission teams semantics):
+
+```php
+// config/permixion.php
+'teams' => [
+    // ...
+    'global_fallback' => true,
+],
+
+$user->assignRole('owner', GlobalScope::instance());
+$user->hasRole('owner', $team);   // true with global_fallback, false without
+```
+
+Writes (`assignRole`/`removeRole`/`syncRoles`) always target the exact scope
+they are given — `global_fallback` only widens reads.
+
 ### Blade Directives
 
 ```blade
