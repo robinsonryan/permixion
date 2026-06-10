@@ -11,7 +11,7 @@
     ],
     "require": {
         "php": "^8.3",
-        "robinsonryan/taxon": "^1.1|@dev",
+        "robinsonryan/taxon": "^2.0|@dev",
         "illuminate/auth": "^11.0|^12.0|^13.0",
         "illuminate/contracts": "^11.0|^12.0|^13.0",
         "illuminate/support": "^11.0|^12.0|^13.0"
