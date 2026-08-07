@@ -4,9 +4,7 @@ includes:
 parameters:
     paths:
         - src
+        - tests/Fixtures
     level: 8
-    ignoreErrors:
-        -
-            # Consumer-facing trait (apps `use HasRoles` on their User model); never used inside src.
-            identifier: trait.unused
-            path: src/Traits/HasRoles.php
+    phpVersion: 80200
+    tmpDir: .phpstan.cache

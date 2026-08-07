@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `HasRoles::can()` no longer fatals on ability forms it cannot resolve. Laravel's
+  `Authorizable::can()` accepts `iterable|string|UnitEnum`, but `can()` forwarded the
+  ability straight into `hasPermissionTo(string|Permission)`, so an iterable or enum
+  ability raised a `TypeError` instead of being authorized. Such abilities now bypass
+  Permixion's own check and go to the parent `can()`. **Permixion does not widen what
+  they grant** — it does not, for example, resolve a `BackedEnum` to its `->value` and
+  match a permission by that name.
+- `HasRoles::can()` no longer fatals when `$arguments` is a non-array. `$user->can('update', $dto)`
+  evaluated `$arguments[0]` on an arbitrary object, raising
+  `Cannot use object of type X as array` for anything not implementing `ArrayAccess`.
+  The scope-sniffing branch now subscripts only arrays and `ArrayAccess`. Behaviour is unchanged for
+  every input that previously worked (arrays, class-strings, Eloquent models).
+
+### Changed
+- Minimum PHP lowered from `^8.3` to `^8.2`, matching `robinsonryan/taxon` and the harness
+  package baseline. Removed the PHP 8.3-only `#[\Override]` attribute from
+  `PermixionServiceProvider::register()`, which was unusable on the new floor.
+- Quality gate now runs Rector (`composer quality` gained `@refactor:check`); PHPStan
+  analyses `tests/Fixtures` alongside `src`, which is what surfaced the `can()` defects
+  above. No public API changed.
+
 ## [2.0.0] - 2026-05-06
 
 ### Changed (BREAKING)

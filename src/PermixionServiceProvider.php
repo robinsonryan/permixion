@@ -14,7 +14,6 @@ use RobinsonRyan\Taxon\Contracts\Scope;
 
 class PermixionServiceProvider extends ServiceProvider
 {
-    #[\Override]
     public function register(): void
     {
         $this->mergeConfigFrom(
