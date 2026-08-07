@@ -13,3 +13,12 @@ yarn-error.log
 composer.lock
 .phpunit.cache
 .workspace
+
+# Claude harness symlinks (managed by link.sh, not committed)
+.claude/agents
+.claude/constitution.md
+.claude/imports
+.claude/knowledge
+.claude/skills
+.claude/scheduled_tasks
+.claude/scheduled_tasks.lock
