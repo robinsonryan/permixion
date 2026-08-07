@@ -4,6 +4,12 @@
 > convention: `$CLAUDE_HARNESS_DIR/notes/implementation-queue.md`. Hand-editing is fine.
 
 ## Queued
+### Examine the `Gate::before` short-circuit
+- **Added**: 2026-08-07 · Track P / P4 gating
+- **Tier**: needs a decision before any code change
+- **Why deferred**: every option changes an authorization outcome for a live consumer (ccstake runs with `register_gate => true`)
+- **Context**: `docs/gate-before-review.md`. The hook is model-blind — it takes `($user, $ability)` and never sees Laravel's `$arguments`, so `can('update', $postA)` and `can('update', $postB)` are indistinguishable and any policy that discriminates by instance is bypassed. Also: scope comes from ambient request state rather than the model, super-admin grants every ability unscoped, and neither the hook nor `can()` has a single test. Confirmed safe: the `?true` return type makes a hard-deny structurally impossible, and the read path has no strict-mode throw.
+
 
 ### Support Pest 5 / PHPUnit 13 / PHP 8.4+ in the constraint matrix
 - **Added**: 2026-08-07 · harness health & efficiency session — apps are queued to upgrade to Pest 5 for Tia; consuming apps can't move until this package allows it
