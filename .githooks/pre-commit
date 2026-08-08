@@ -26,6 +26,14 @@
 # script only decides when to run it. A hook with its own copy of the step list
 # is a second definition that silently diverges.
 #
+# VERIFY-ONLY, WITH ONE HONEST EXCEPTION: every step is a checking variant
+# (`pint --test`, `rector --dry-run`), so the hook does not rewrite your source
+# and never stages anything. The exception is a package whose frontend gate ends
+# in a build — yikes commits its island bundle — where running the gate rewrites
+# a tracked artifact. That cannot be waved away, so the hook detects it and
+# refuses the commit rather than letting a stale bundle ship. See the
+# shipped-artifact check at the end.
+#
 # WHERE IT RUNS:
 #   On the HOST; every check is dispatched into the package's DDEV web container
 #   via `ddev exec --dir <container path>`. Works from the main checkout and from
@@ -173,6 +181,17 @@ run_step() {
 
 echo "package pre-commit gate -> $CDIR"
 
+# ------------------------------------------------------ pre-gate tree state ---
+# Snapshot TRACKED files only, so the comparison at the end measures what the
+# GATE changed rather than what you already had in progress. See the staleness
+# check below for why this exists.
+#
+# --untracked-files=no is deliberate: PHPStan and Pest drop cache directories
+# mid-run, and an untracked cache is not a staleness risk. A rebuilt artifact
+# always shows up as a tracked modification (or, for content-hashed filenames,
+# as the tracked DELETION of the old chunk), so the real hazard is still caught.
+TREE_BEFORE="$(git status --porcelain --untracked-files=no)"
+
 if [ "$PHP_CHANGED" -eq 1 ]; then
     run_step "composer quality" ddev_exec composer quality
 else
@@ -185,6 +204,39 @@ elif [ "$JS_CHANGED" -eq 1 ]; then
     echo "  frontend         ... skipped (this package has no frontend gate)"
 else
     echo "  frontend         ... skipped (nothing staged that frontend tooling reads)"
+fi
+
+# --------------------------------------------------- shipped-artifact check ---
+# A package that COMMITS a build artifact has a failure mode the rest of the gate
+# cannot see. yikes ships its prebuilt island bundle in a tracked `dist/`, and its
+# `npm run quality` ends in `vite build` — so running the gate rewrites `dist/`.
+# The hook reads the working tree and never stages anything (deliberately), which
+# means a rebuild it triggers lands OUTSIDE the commit: every check passes, the
+# commit succeeds, and the bundle that ships is the stale one. Silent, and exactly
+# the kind of thing you discover in production.
+#
+# So: if the gate changed a tracked file, stop and say which. This is the one
+# place the hook is not purely verify-only, and rather than pretend otherwise it
+# refuses to let the discrepancy through. In the normal case it is silent — the
+# build is deterministic, and three full sweeps of every package left the tree
+# untouched, so this only fires when the committed artifact genuinely disagrees
+# with its source.
+TREE_AFTER="$(git status --porcelain --untracked-files=no)"
+if [ "$TREE_BEFORE" != "$TREE_AFTER" ]; then
+    echo
+    echo "pre-commit: the gate CHANGED tracked files — commit aborted."
+    echo
+    echo "  Almost certainly a committed build artifact that no longer matches its"
+    echo "  source: the gate rebuilt it, and the rebuild is not in your commit."
+    echo "  Review and stage it alongside the source that produced it, then retry."
+    echo
+    echo "  changed by the gate:"
+    diff <(printf '%s\n' "$TREE_BEFORE") <(printf '%s\n' "$TREE_AFTER") \
+        | sed -n 's/^> /    /p'
+    echo
+    echo "full log: $LOG"
+    echo "total: $((SECONDS - TOTAL_START))s"
+    exit 1
 fi
 
 echo "package pre-commit gate passed in $((SECONDS - TOTAL_START))s"
