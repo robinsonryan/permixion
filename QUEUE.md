@@ -17,6 +17,20 @@
   was deliberately put on the `Permixion` service rather than the trait) and ship with
   the next change that touches the package.
 
+### A bare `Scope` argument never actually scopes `can()`
+- **Added**: 2026-08-08 · self-review of the 0.4.0 can() narrowing
+- **Tier**: needs a decision — it changes an authorization outcome
+- **Why deferred**: pre-dates 0.4.0 and is unchanged by it; fixing it would alter what
+  is granted, which is not a lint fix
+- **Context**: `can('posts.create', [$team])` scopes correctly — the array form is read
+  at `$arguments[0]`. `can('posts.create', $team)` does **not**: the bare form falls
+  through scope extraction and checks with a null scope, so it can grant on an unscoped
+  row that the scoped form would refuse. Laravel treats `$ability, $arg` and
+  `$ability, [$arg]` as equivalent, so the asymmetry is surprising. `argumentsCarryPolicySubject()`
+  already classifies a bare Scope correctly (not a policy subject); only the extraction
+  block below it is array-shaped. Fix is small — but decide first whether the bare form
+  should scope (narrower, may remove grants) or stay unscoped (status quo).
+
 ### Support Pest 5 / PHPUnit 13 / PHP 8.4+ in the constraint matrix
 - **Added**: 2026-08-07 · harness health & efficiency session — apps are queued to upgrade to Pest 5 for Tia; consuming apps can't move until this package allows it
 - **Tier**: SOLO

@@ -126,3 +126,23 @@ test('without the permission, the model form reaches the policy correctly', func
     expect($this->author->can('update', $this->post))->toBeTrue()
         ->and($this->other->can('update', $this->post))->toBeFalse();
 });
+
+test('the narrowing holds in both defer_to_policies states', function (bool $defer): void {
+    // defer_to_policies governs the Gate::before hook only. It must never be able
+    // to re-open this door, in either direction.
+    config()->set('permixion.gate.defer_to_policies', $defer);
+
+    $this->other->assignRole('editor');
+
+    expect($this->other->can('update', $this->post))->toBeFalse();
+})->with([true, false]);
+
+test('the narrowing holds regardless of register_gate', function (bool $registered): void {
+    // Nor is this door governed by register_gate — nbss runs with it false and must
+    // still get the policy's answer.
+    config()->set('permixion.register_gate', $registered);
+
+    $this->other->assignRole('editor');
+
+    expect($this->other->can('update', $this->post))->toBeFalse();
+})->with([true, false]);
