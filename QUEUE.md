@@ -4,13 +4,6 @@
 > convention: `$CLAUDE_HARNESS_DIR/notes/implementation-queue.md`. Hand-editing is fine.
 
 ## Queued
-### Examine the `Gate::before` short-circuit
-- **Added**: 2026-08-07 · Track P / P4 gating
-- **Tier**: needs a decision before any code change
-- **Why deferred**: every option changes an authorization outcome for a live consumer (ccstake runs with `register_gate => true`)
-- **Context**: `docs/gate-before-review.md`. The hook is model-blind — it takes `($user, $ability)` and never sees Laravel's `$arguments`, so `can('update', $postA)` and `can('update', $postB)` are indistinguishable and any policy that discriminates by instance is bypassed. Also: scope comes from ambient request state rather than the model, super-admin grants every ability unscoped, and neither the hook nor `can()` has a single test. Confirmed safe: the `?true` return type makes a hard-deny structurally impossible, and the read path has no strict-mode throw.
-
-
 ### Support Pest 5 / PHPUnit 13 / PHP 8.4+ in the constraint matrix
 - **Added**: 2026-08-07 · harness health & efficiency session — apps are queued to upgrade to Pest 5 for Tia; consuming apps can't move until this package allows it
 - **Tier**: SOLO
@@ -21,29 +14,29 @@
   $CLAUDE_HARNESS_DIR/notes/harness-health-research-2026-08.md. ddev already runs php 8.5
   against the ^8.2 constraint. Consumed by ccstake
 
-### Untested authorization paths (RBAC coverage gap)
-- **Added**: 2026-08-07 · package quality baseline (Track P / P4)
-- **Tier**: LIGHT
-- **Why deferred**: the baseline pass gates existing tests; writing an RBAC suite is its own scoped work
-- **Context**: 33 tests / 81 assertions cover role assignment, team scoping, wildcards,
-  name identity and global fallback. Authorization surfaces with **no test at all**:
-  - `HasRoles::can()` — the Gate-compatibility alias. Nothing exercises it, which is how the
-    two crash bugs fixed in this pass survived. Wants cases for: string ability, `Permission`
-    ability, a `Scope` passed via `$arguments[0]`, a non-array `$arguments` (e.g. a model or
-    class-string), and an iterable/enum ability delegating to the parent.
-  - `PermixionServiceProvider::registerGatePermissions()` — the `Gate::before` hook that
-    grants super-admin and scope-resolved permissions app-wide. No test asserts that it
-    returns `null` (rather than `false`) on a miss; returning `false` there would hard-deny
-    every other gate in a consuming app.
-  - The three middlewares (`RoleMiddleware`, `PermissionMiddleware`,
-    `RoleOrPermissionMiddleware`) — no test covers the deny path or the 403 they raise.
-  - `hasExactRoles()` — the only `HasRoles` check method with no test.
-  - The five exception classes (`RoleDoesNotExist`, `PermissionDoesNotExist`,
-    `RoleAlreadyExists`, `PermissionAlreadyExists`, `UnauthorizedException`) — no test
-    names any of them, so nothing pins which paths throw vs. return false. `TestCase`
-    pins `permixion.strict` to `true` for every test, so the `false` branch (return
-    instead of throw) has never executed.
-
 ## Blocked
 
 ## Archive
+
+### ~~Examine the `Gate::before` short-circuit~~ — resolved 2026-08-08 in 4.0.0
+Investigated, corrected, and closed. The mechanism was real but the exposure
+assessment was wrong: the hook requires `implements HasPermissions`, which only
+nbss declared, so it had never executed in any consumer or any test. Model-blindness
+turned out to be spatie's own behaviour (`PermissionRegistrar.php:125`), inherited by
+design; the genuine permixion defect was `HasRoles::can()`, which spatie does not
+override at all. `can()` narrowed unconditionally; the hook made opt-out via
+`gate.defer_to_policies`. Full write-up, including the three corrections, in
+`docs/gate-before-review.md`.
+
+### ~~Untested authorization paths (RBAC coverage gap)~~ — resolved 2026-08-08
+33 → 88 tests. `Gate::before` (both guard paths, no-deny, no-throw, super admin,
+both `defer_to_policies` states), `can()` (bare / scoped / subject-bearing, plus both
+crash-safety fixes), all three middlewares (admit, refuse, guest, exception payload),
+`hasExactRoles()` (order, subset, superset, empty, scope isolation), and both
+`permixion.strict` branches including the lenient auto-create.
+
+One item from the original entry is **deliberately not covered**: the five exception
+classes are exercised through the paths that raise them rather than having tests of
+their own. `UnauthorizedException::getRequiredPermissions()` is asserted directly;
+`missingTrait()` has no test, since reaching it requires a user model that satisfies
+the middleware's `method_exists` guard while lacking the trait.
