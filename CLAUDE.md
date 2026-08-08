@@ -192,7 +192,12 @@ Other concepts worth knowing:
    is local verification; it is never part of a commit.
 5. **`robinsonryan/taxon` is a path repository** (`../taxon`), mounted into the web
    container at `/var/www/taxon` by `.ddev/docker-compose.taxon.yaml`. Changes to
-   taxon are live for permixion's suite without a `composer update`.
+   taxon are live for permixion's suite without a `composer update`. Composer would
+   guess that checkout's version from the checked-out **branch** (`dev-master`), which
+   satisfies no real constraint, so the repository entry pins it with
+   `options.versions => {"robinsonryan/taxon": "0.3.x-dev"}` — bump that by hand
+   whenever the `require` constraint on taxon moves to a new minor, or the local
+   install stops resolving.
 6. **PHPStan (level 8) analyses `src` and `tests/Fixtures` only** — not the test
    files. A type error inside a `.php` test is caught by nothing.
 7. **The `parentCan()` guard in `HasRoles` looks redundant to the analyser and is

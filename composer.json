@@ -11,7 +11,7 @@
     ],
     "require": {
         "php": "^8.2",
-        "robinsonryan/taxon": "^2.0|@dev",
+        "robinsonryan/taxon": "^0.3.0",
         "illuminate/auth": "^12.0|^13.0",
         "illuminate/contracts": "^12.0|^13.0",
         "illuminate/support": "^12.0|^13.0"
@@ -27,7 +27,12 @@
     "repositories": [
         {
             "type": "path",
-            "url": "../taxon"
+            "url": "../taxon",
+            "options": {
+                "versions": {
+                    "robinsonryan/taxon": "0.3.x-dev"
+                }
+            }
         }
     ],
     "autoload": {

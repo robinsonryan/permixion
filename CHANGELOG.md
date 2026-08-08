@@ -13,7 +13,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-08
+
 ### Changed (BREAKING)
+- **`robinsonryan/taxon` is now constrained to `^0.3.0`.** It was declared as
+  `^2.0|@dev`, and that stopped meaning anything the moment Taxon renumbered itself
+  down to `0.x` on 2026-08-08 and re-cut its tags at the same commits (`v2.0.0`
+  became `v0.2.0`, and so on). No version can ever satisfy `^2.0` again, so the only
+  live branch of that `|` was the bare `@dev` — and a bare `@dev` is `*@dev`: **any**
+  version, at **any** stability. So the package that stores every byte of its state
+  in Taxon was, in effect, declaring no constraint on Taxon at all. Consumers did not
+  get an error; they got whichever Taxon their own `composer.json` happened to pull
+  in, and this package quietly accepted it.
+
+  `^0.3.0` — Composer reads it as `>=0.3.0 <0.4.0` — is the floor, and the reason is
+  schema, not API. Permixion owns no migrations and no tables. Every role and
+  permission assignment it makes is a row in Taxon's `taggables` table, written
+  through `$user->tags()->attach(...)`, and Taxon 0.3.0 is the release that made that
+  table's `taggable_id` column follow the *host application's* key type instead of
+  emitting `uuidMorphs()` unconditionally. Below 0.3.0, on PostgreSQL with Taxon's
+  default `incrementing` id type, `taggable_id` is a genuine `uuid` column, so
+  `assignRole()` against an integer-keyed user model dies on insert; and Taxon's
+  `uuid7` migration branch could not run on PostgreSQL at all. Neither failure is
+  reachable from this package's own test suite, which runs on SQLite, where `uuid`,
+  `bigint` and `varchar` all collapse into the same loose affinity — which is exactly
+  how the defect survived this long unnoticed on both sides.
+
+  The API surface argues for nothing narrower and nothing wider. Permixion consumes
+  `Models\Tag`, `Models\Taggable`, `Contracts\Scope`, `HasTags`,
+  `Concerns\CanScopeTags`, `TaxonServiceProvider` and the `taxon.tables.taggables`
+  config key; every one of those has existed, unchanged in the ways this package
+  depends on, since Taxon 0.1.0. Picking a lower floor would have been defensible on
+  a pure symbol audit and wrong in production.
+
+  **Breaking for any consumer sitting on Taxon `0.2.x`.** Under Composer's
+  caret-on-zero rule `^0.2.1` and `^0.3.0` are disjoint, so `composer update` will
+  refuse to resolve until that consumer moves its own Taxon constraint up. The move
+  is worth making on its own merits for any PostgreSQL application: re-publish
+  Taxon's migrations (`--tag=taxon-migrations --force`) before a fresh install, or,
+  where the broken table is already live, write a migration altering
+  `taggables.taggable_id` to `bigint`. On MySQL and SQLite nothing is required —
+  `uuidMorphs` degraded to a string column there and integer keys were being stored
+  without complaint.
+
 - **Laravel 11 support dropped.** `illuminate/auth`, `illuminate/contracts` and
   `illuminate/support` narrow from `^11.0|^12.0|^13.0` to `^12.0|^13.0`, and
   `orchestra/testbench` from `^9.0|^10.0|^11.0` to `^10.0|^11.0`.
@@ -31,6 +73,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still work under 11 — but it is no longer claimed, because it was never verified.
   Stay on `0.4.0` if you need the old constraint, and treat it as unverified there
   too.
+
+### Development
+- **The `../taxon` path repository now declares a version.** Composer guesses a path
+  package's version from git, and it prefers the checked-out *branch* over a tag
+  sitting on the same commit — so the local Taxon checkout advertised itself as
+  `dev-master` even while parked exactly on `v0.3.0`. That satisfied the old `@dev`
+  and satisfies nothing real, which meant the honest constraint above could not be
+  installed locally at all. The repository entry now carries
+  `options.versions: { "robinsonryan/taxon": "0.3.x-dev" }`, which labels the checkout
+  as the 0.3 development line: live edits to `../taxon` are still picked up without a
+  `composer update`, and `^0.3.0` resolves. This is local development wiring only — it
+  has no effect on a consumer, which resolves Taxon from its own repository and real
+  tags. It does need bumping by hand when Taxon opens its 0.4 line.
 
 ## [0.4.0] - 2026-08-08
 
