@@ -101,23 +101,37 @@ class PermixionServiceProvider extends ServiceProvider
             return;
         }
 
-        Gate::before(function ($user, string $ability): ?true {
+        // The ?true return type is load-bearing: it makes a hard deny structurally
+        // impossible. A Gate::before returning false would refuse every unrelated
+        // gate in the consuming app, so the signature forecloses that outright.
+        //
+        // $arguments arrives as a single array — Laravel does not spread it.
+        Gate::before(function ($user, string $ability, array $arguments = []): ?true {
+            // Using the HasRoles trait is deliberately NOT enough. Declaring the
+            // contract is how a model consents to Permixion outranking its policies.
             if (! $user instanceof HasPermissions) {
                 return null;
             }
 
-            // Check super admin
+            // Super admin is deliberate god-mode and stays unconditional — it is
+            // not narrowed by defer_to_policies.
             if (config('permixion.super_admin.enabled')) {
                 $superAdminRole = config('permixion.super_admin.role');
-                if ($user->hasRole($superAdminRole)) {
+                if ($superAdminRole !== null && $user->hasRole($superAdminRole)) {
                     return true;
                 }
             }
 
-            // Resolve current scope
+            // A permission name cannot answer a per-instance question. When the
+            // caller supplied a subject and the app has opted in, decline so the
+            // policy — the only thing that can see the instance — decides.
+            if (config('permixion.gate.defer_to_policies', false)
+                && app(Permixion::class)->argumentsCarryPolicySubject($arguments)) {
+                return null;
+            }
+
             $scope = app(Permixion::class)->resolveCurrentScope();
 
-            // Check permission
             if ($user->hasPermissionTo($ability, $scope)) {
                 return true;
             }

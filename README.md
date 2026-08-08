@@ -38,6 +38,11 @@ class User extends Authenticatable
 }
 ```
 
+That gives you roles, permissions, the Blade directives, and the middleware.
+
+It does **not** enable the `Gate::before` short-circuit. That one extra step is
+deliberate — see [Gate integration](#gate-integration) below.
+
 ### Create Roles and Permissions
 
 ```php
@@ -185,6 +190,64 @@ Route::middleware(['role_or_permission:admin|posts.delete'])->group(function () 
     //
 });
 ```
+
+## Gate integration
+
+With `register_gate => true` (the default), Permixion installs a `Gate::before`
+hook. Laravel runs those **ahead of every policy**, so a non-null return means the
+policy never executes.
+
+Because that is a large promise, it is opt-in **per model**. The hook ignores any
+user that does not explicitly declare the contract — using the trait alone is not
+enough:
+
+```php
+use RobinsonRyan\Permixion\Contracts\HasPermissions;
+use RobinsonRyan\Permixion\Traits\HasRoles;
+
+class User extends Authenticatable implements HasPermissions
+{
+    use HasRoles;
+}
+```
+
+Declaring `HasPermissions` is how a model says *"this package may outrank my
+policies."* If you never declare it, `register_gate` has no effect — which is the
+safe default, not a bug.
+
+### Permissions are coarse — `defer_to_policies`
+
+A permission is a **name**. It can express *"may update posts at all"*; it can
+never express *"may update **this** post"*. So by default, a user holding a
+permission called `update` is granted `update` on **every** instance — the policy,
+including any ownership or tenancy clause it contains, is skipped entirely.
+
+That matches `spatie/laravel-permission`, and it is fine when permissions are your
+whole authorization model. It is **not** fine when your policies discriminate
+between instances. In that case:
+
+```php
+// config/permixion.php
+'gate' => [
+    'defer_to_policies' => true,
+],
+```
+
+With it on, any check that carries a subject — `can('update', $post)`,
+`Gate::authorize('update', $post)` — is handed to the policy. Subject-free checks
+still resolve from permissions, and super admin is unaffected.
+
+Two things to know before enabling it:
+
+- It can only ever **remove** grants, never add them. The failure mode is a visible
+  403, not silent over-permission.
+- Confirm every model you authorize actually **has a policy**. Abilities that were
+  relying on the short-circuit will now be answered by the policy — or denied if
+  none exists.
+
+> **Naming tip.** Never name a permission after a Laravel ability verb (`view`,
+> `update`, `delete`, `create`). Namespace them — `posts.update` — and a permission
+> can't collide with a policy ability in the first place.
 
 ## Documentation
 

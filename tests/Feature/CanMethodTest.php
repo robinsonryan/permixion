@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Gate;
+use RobinsonRyan\Permixion\Contracts\HasPermissions;
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\Tests\Fixtures\Post;
 use RobinsonRyan\Permixion\Tests\Fixtures\PostPolicy;
@@ -80,29 +81,45 @@ test('an iterable ability delegates to the parent instead of fataling', function
 
 /*
 |--------------------------------------------------------------------------
-| The defect — CHARACTERIZATION of today's behaviour
+| The narrowing — a permission name may not answer a per-instance question
 |--------------------------------------------------------------------------
-| These two tests are expected to INVERT when can() is narrowed. They exist so
-| the change is visible as a deliberate behavioural edit, not a silent drift.
+| These two inverted when can() was narrowed. That inversion IS the fix, and it
+| is recorded here rather than in a changelog line so it cannot regress quietly.
 */
 
-test('CURRENT: a model argument is ignored and the policy is bypassed', function (): void {
+test('a model argument is handed to the policy instead of being answered here', function (): void {
     $this->other->assignRole('editor');
 
-    // The policy would refuse — $other is not the author.
-    expect((new PostPolicy)->update($this->other, $this->post))->toBeFalse();
+    // Holds the `update` permission outright...
+    expect($this->other->hasPermissionTo('update'))->toBeTrue();
 
-    // can() ignores the Post entirely and answers from the permission name.
-    expect($this->other->can('update', $this->post))->toBeTrue();
+    // ...but the policy owns this question, and it refuses: not the author.
+    expect((new PostPolicy)->update($this->other, $this->post))->toBeFalse()
+        ->and($this->other->can('update', $this->post))->toBeFalse();
 });
 
-test('CURRENT: the bypass applies to a trait-only user, with no opt-in', function (): void {
-    // No `implements HasPermissions`, and register_gate is irrelevant here.
-    // This is the door that cannot be closed by configuration.
+test('the narrowing applies to trait-only users, with no opt-in needed', function (): void {
+    // This door has no `instanceof HasPermissions` guard and ignores
+    // register_gate, so the fix has to hold without any consumer opting in.
     $this->other->assignRole('editor');
 
-    expect($this->other)->not->toBeInstanceOf(RobinsonRyan\Permixion\Contracts\HasPermissions::class)
-        ->and($this->other->can('update', $this->post))->toBeTrue();
+    expect($this->other)->not->toBeInstanceOf(HasPermissions::class)
+        ->and($this->other->can('update', $this->post))->toBeFalse();
+});
+
+test('the policy still grants when it should — narrowing removed no legitimate access', function (): void {
+    $this->author->assignRole('editor');
+
+    expect($this->author->can('update', $this->post))->toBeTrue();
+});
+
+test('a class-string argument is a policy question and is delegated', function (): void {
+    $this->other->assignRole('editor');
+    Permixion::createPermission('viewAny');
+    $this->other->givePermissionTo('viewAny');
+
+    // PostPolicy::viewAny() returns false. The permission must not override it.
+    expect($this->other->can('viewAny', Post::class))->toBeFalse();
 });
 
 test('without the permission, the model form reaches the policy correctly', function (): void {

@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-08
+
+### Changed (BREAKING)
+- **`HasRoles::can()` no longer answers questions that carry a policy subject.**
+  A permission is a *name*: it can express "may update posts at all", never "may
+  update **this** post". Previously `can('update', $post)` ignored `$post` entirely
+  and returned `true` for anyone holding an `update` permission — silently skipping
+  the policy, including any ownership or tenancy clause it contained. Calls that
+  carry a subject (a model, a class-string, a DTO) are now delegated to the parent
+  `can()` so the policy decides.
+
+  Unchanged: bare ability checks (`can('posts.create')`) still resolve from
+  permissions, and a `Scope` argument is still a scope, not a subject. This
+  short-circuit was never governed by `register_gate` and had no opt-in guard, so
+  the narrowing is unconditional. It can only remove grants, never add them.
+
+  *This has no analogue in `spatie/laravel-permission`, which does not override
+  `can()` at all. The narrowing moves toward parity, not away from it.*
+
+### Added
+- **`permixion.gate.defer_to_policies`** (default `false`). When enabled, the
+  `Gate::before` hook returns `null` for any check carrying a policy subject, so
+  `Gate::authorize('update', $post)` is answered by the policy rather than by a
+  permission name. Subject-free checks still resolve from permissions, and the
+  super-admin branch is deliberately unaffected — it remains unconditional god-mode.
+
+  The default preserves today's behaviour, which is byte-for-byte what
+  `spatie/laravel-permission` does. Enable it when your policies discriminate
+  between instances of the same model. Before enabling, confirm every model you
+  authorize has a policy: abilities that relied on the short-circuit will now be
+  decided by the policy, or denied if none exists.
+- `Permixion::argumentsCarryPolicySubject()`, the single shared definition of what
+  counts as a policy question. Both short-circuits consult it so they cannot drift.
+
+### Fixed
+- The `Gate::before` closure now accepts Laravel's third `$arguments` parameter.
+  It previously declared only `($user, $ability)`, so the subject was unreachable.
+
+### Documentation
+- README now documents that the `Gate::before` hook requires the user model to
+  explicitly `implements HasPermissions` — using the `HasRoles` trait alone is not
+  enough. This is intentional (declaring the contract is how a model consents to
+  Permixion outranking its policies), but it was previously undocumented while
+  `register_gate` defaulted to `true`, so the feature advertised itself as on while
+  being inert for anyone following the README's example.
+
+### Tests
+- 33 → 88 tests. `Gate::before`, `can()`, all three middlewares, `hasExactRoles()`
+  and the `permixion.strict => false` branch had no coverage at all; all are now
+  characterized, both flag states included. The suite had never executed the
+  `Gate::before` hook, because the `User` fixture used the trait without the
+  contract — the same gap the README had.
+
+## [3.1.0] - 2026-08-07
+
+### Added
+- `GlobalScope` sentinel, `teams.global_fallback`, and `hasRoleAnywhere()`.
+
+## [3.0.0] - 2026-07-xx
+
+### Changed (BREAKING)
+- Laravel 13 / PHP 8.4 support; hardened to Larastan level 8.
+- Requires `robinsonryan/taxon` `^2.0`.
+
+## [Unreleased — folded into 4.0.0]
+
 ### Fixed
 - `HasRoles::can()` no longer fatals on ability forms it cannot resolve. Laravel's
   `Authorizable::can()` accepts `iterable|string|UnitEnum`, but `can()` forwarded the

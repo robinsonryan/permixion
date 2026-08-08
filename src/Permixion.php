@@ -244,6 +244,47 @@ class Permixion
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * Whether $arguments carries something a policy is expected to inspect.
+     *
+     * A permission is a NAME: it can express "may update posts at all", never
+     * "may update *this* post". So the presence of a subject marks a question
+     * only a policy can answer. A Scope is Permixion's own concern and does not
+     * count; anything else — a model, a class-string, a DTO — does.
+     *
+     * Shared by both short-circuits (the Gate::before hook and HasRoles::can())
+     * so the two can never drift apart on what counts as a policy question.
+     */
+    public function argumentsCarryPolicySubject(mixed $arguments): bool
+    {
+        if ($arguments === null || $arguments === []) {
+            return false;
+        }
+
+        if ($arguments instanceof Scope) {
+            return false;
+        }
+
+        if (is_array($arguments)) {
+            foreach ($arguments as $argument) {
+                if (! $argument instanceof Scope) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // An ArrayAccess container may legitimately carry a Scope at index 0. An
+        // Eloquent model is also ArrayAccess but yields null there, so it reads as
+        // a policy subject — which is precisely what it is.
+        if ($arguments instanceof \ArrayAccess) {
+            return ! (($arguments[0] ?? null) instanceof Scope);
+        }
+
+        return true;
+    }
+
     public function permissionMatches(string $permission, string $pattern): bool
     {
         if (! config('permixion.wildcards.enabled')) {

@@ -101,8 +101,44 @@ return [
     |
     | Automatically register permissions with Laravel's Gate.
     |
+    | NOTE: this installs a Gate::before hook, which Laravel runs AHEAD of every
+    | policy. The hook only acts on users that explicitly
+    | `implements RobinsonRyan\Permixion\Contracts\HasPermissions` — using the
+    | HasRoles trait alone is not enough, and is not an oversight: declaring the
+    | contract is how a model consents to Permixion outranking its policies.
+    |
     */
     'register_gate' => true,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Gate Behaviour
+    |--------------------------------------------------------------------------
+    |
+    | defer_to_policies
+    |
+    | A permission is a NAME. It can express "may update posts at all"; it can
+    | never express "may update *this* post". When a caller passes a subject —
+    | `can('update', $post)`, `Gate::authorize('update', $post)` — the question
+    | belongs to a policy, because only the policy can see which record it is.
+    |
+    | false (default) matches spatie/laravel-permission: holding a permission
+    |       whose name equals the ability short-circuits the policy entirely,
+    |       including any ownership or tenancy clause it contains.
+    |
+    | true  declines those questions and lets the policy answer. Turn this on if
+    |       your policies discriminate between instances of the same model.
+    |
+    | This can only ever REMOVE grants, never add them, so the failure mode is a
+    | visible 403 rather than silent over-permission. Before enabling it, confirm
+    | every model you authorize actually has a policy — abilities that relied on
+    | the short-circuit will now be decided by the policy, or denied if none
+    | exists. Super admin is unaffected either way.
+    |
+    */
+    'gate' => [
+        'defer_to_policies' => false,
+    ],
 
     /*
     |--------------------------------------------------------------------------

@@ -221,11 +221,24 @@ trait HasRoles
      * Ability forms Permixion cannot resolve itself (iterables, enums) are handed
      * straight to the parent `can()` — Permixion never widens what those grant.
      *
+     * A permission is a NAME. It can express "may update posts at all"; it cannot
+     * express "may update *this* post". So when the caller supplies a subject for a
+     * policy to inspect, this method declines to answer and delegates — the policy
+     * is the only thing that can see the instance. Without that rule a coarse
+     * permission silently outranks every per-instance clause a policy contains.
+     *
+     * Note this is deliberately NOT governed by `permixion.register_gate`, which
+     * covers only the Gate::before hook. The two short-circuits are independent.
+     *
      * @param  iterable<array-key, mixed>|string|\UnitEnum|Permission  $ability
      * @param  mixed  $arguments
      */
     public function can($ability, $arguments = []): bool
     {
+        if (app('permixion')->argumentsCarryPolicySubject($arguments)) {
+            return $this->parentCan($ability, $arguments);
+        }
+
         // Only subscript what is actually subscriptable. A plain object argument
         // (`$user->can('update', $dto)`) previously fataled here.
         $scope = null;
@@ -240,6 +253,15 @@ trait HasRoles
             return true;
         }
 
+        return $this->parentCan($ability, $arguments);
+    }
+
+    /**
+     * @param  iterable<array-key, mixed>|string|\UnitEnum|Permission  $ability
+     * @param  mixed  $arguments
+     */
+    protected function parentCan($ability, $arguments = []): bool
+    {
         // Generic trait: `parent` is whatever class the consumer mixes this into, so
         // this guard is only provably true when analysed against one concrete host
         // (the test fixture). Removing it fatals for hosts with no parent `can()`.

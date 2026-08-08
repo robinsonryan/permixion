@@ -3,10 +3,12 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Gate;
+use RobinsonRyan\Permixion\Contracts\HasPermissions;
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\Tests\Fixtures\GateUser;
 use RobinsonRyan\Permixion\Tests\Fixtures\Post;
 use RobinsonRyan\Permixion\Tests\Fixtures\PostPolicy;
+use RobinsonRyan\Permixion\Tests\Fixtures\Team;
 use RobinsonRyan\Permixion\Tests\Fixtures\User;
 
 beforeEach(function (): void {
@@ -37,7 +39,7 @@ test('a trait-only user does not trigger the hook, even holding the permission',
     $traitOnly = User::create(['name' => 'Trait Only', 'email' => 'trait@example.com']);
     $traitOnly->assignRole('editor');
 
-    expect($traitOnly)->not->toBeInstanceOf(RobinsonRyan\Permixion\Contracts\HasPermissions::class)
+    expect($traitOnly)->not->toBeInstanceOf(HasPermissions::class)
         ->and($traitOnly->hasPermissionTo('update'))->toBeTrue();
 
     // Holds the permission, but never reaches the short-circuit. Policy decides.
@@ -123,4 +125,98 @@ test('a permission the user does not hold leaves the policy in charge', function
     $this->other->givePermissionTo('posts.publish');
 
     expect(Gate::forUser($this->other)->allows('update', $this->post))->toBeFalse();
+});
+
+/*
+|--------------------------------------------------------------------------
+| defer_to_policies => true
+|--------------------------------------------------------------------------
+| The opt-in that makes a per-instance policy clause un-bypassable.
+*/
+
+test('DEFERRING: a subject-bearing question is handed to the policy', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    $this->other->assignRole('editor');
+
+    // Still holds the permission outright...
+    expect($this->other->hasPermissionTo('update'))->toBeTrue();
+
+    // ...but the policy now decides, and refuses: not the author.
+    expect(Gate::forUser($this->other)->allows('update', $this->post))->toBeFalse();
+});
+
+test('DEFERRING: the policy still grants the author — no legitimate access lost', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    $this->author->assignRole('editor');
+
+    expect(Gate::forUser($this->author)->allows('update', $this->post))->toBeTrue();
+});
+
+test('DEFERRING: instances are now told apart', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    $this->other->assignRole('editor');
+
+    $ownedByAuthor = Post::create(['title' => 'A', 'author_id' => $this->author->id]);
+    $ownedByOther = Post::create(['title' => 'B', 'author_id' => $this->other->id]);
+
+    expect(Gate::forUser($this->other)->allows('update', $ownedByAuthor))->toBeFalse()
+        ->and(Gate::forUser($this->other)->allows('update', $ownedByOther))->toBeTrue();
+});
+
+test('DEFERRING: subject-free ability checks still use permissions', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    $this->other->givePermissionTo('posts.publish');
+
+    // No subject, so nothing for a policy to inspect — the permission answers.
+    expect(Gate::forUser($this->other)->allows('posts.publish'))->toBeTrue();
+});
+
+test('DEFERRING: super admin is still granted everything', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    $this->other->assignRole('super-admin');
+
+    // Deliberate god-mode: the flag narrows the permission branch, not this one.
+    expect(Gate::forUser($this->other)->allows('update', $this->post))->toBeTrue()
+        ->and(Gate::forUser($this->other)->allows('anything-at-all', $this->post))->toBeTrue();
+});
+
+test('DEFERRING: a class-string subject is also deferred', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    Permixion::createPermission('viewAny');
+    Permixion::createRole('viewer', ['viewAny']);
+    $this->other->assignRole('viewer');
+
+    // PostPolicy::viewAny() refuses; the permission must not override it.
+    expect(Gate::forUser($this->other)->allows('viewAny', Post::class))->toBeFalse();
+});
+
+test('DEFERRING: a Scope argument is not a policy subject', function (): void {
+    config()->set('permixion.gate.defer_to_policies', true);
+
+    $team = Team::create(['name' => 'Team A']);
+    $this->other->givePermissionTo('posts.publish');
+
+    // A Scope is Permixion's own concern. Deferring must not mistake it for a
+    // policy subject and swallow an otherwise valid permission check.
+    expect(Gate::forUser($this->other)->allows('posts.publish', [$team]))->toBeTrue();
+});
+
+test('the hook reads AMBIENT scope, never a scope passed in the arguments', function (): void {
+    // Pinned because it is easy to assume otherwise: the hook resolves the
+    // current request/session scope and never consults $arguments for one. A
+    // permission granted only in team A is therefore invisible to a check that
+    // passes team A as an argument while ambient resolution yields nothing.
+    config()->set('permixion.teams.enabled', true);
+
+    $team = Team::create(['name' => 'Team A']);
+    $this->other->givePermissionTo('posts.publish', $team);
+
+    expect(Gate::forUser($this->other)->allows('posts.publish', [$team]))->toBeFalse()
+        ->and($this->other->hasPermissionTo('posts.publish', $team))->toBeTrue();
 });
