@@ -263,8 +263,8 @@ See the [docs](./docs) directory for detailed documentation:
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11.x or 12.x
-- robinsonryan/taxon ^1.1
+- Laravel 12.x or 13.x
+- robinsonryan/taxon ^2.0
 
 ## License
 

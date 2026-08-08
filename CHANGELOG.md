@@ -13,6 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **Laravel 11 support dropped.** `illuminate/auth`, `illuminate/contracts` and
+  `illuminate/support` narrow from `^11.0|^12.0|^13.0` to `^12.0|^13.0`, and
+  `orchestra/testbench` from `^9.0|^10.0|^11.0` to `^10.0|^11.0`.
+
+  The `^11.0` was a promise nobody could keep. Testbench 9 is the only thing that
+  installs Laravel 11, and it caps at PHPUnit 11; this package's `pestphp/pest ^4.0`
+  requires PHPUnit 12. Those two cannot co-exist, so a Laravel 11 test harness has
+  never resolved here — not in CI, not locally, not once. Every green suite this
+  package has ever run was Laravel 12 or 13. Advertising 11 meant shipping an
+  untested compatibility claim, and leaving Testbench 9 in `require-dev` declared a
+  harness that can no longer be installed.
+
+  **Breaking for any consumer pinned to Laravel 11**: `composer update` will now
+  refuse to resolve. Nothing in the package's behaviour changed — the code may well
+  still work under 11 — but it is no longer claimed, because it was never verified.
+  Stay on `0.4.0` if you need the old constraint, and treat it as unverified there
+  too.
+
 ## [0.4.0] - 2026-08-08
 
 ### Changed (BREAKING)
