@@ -4,6 +4,19 @@
 > convention: `$CLAUDE_HARNESS_DIR/notes/implementation-queue.md`. Hand-editing is fine.
 
 ## Queued
+### Namespace the `parentCan()` trait helper
+- **Added**: 2026-08-08 · self-review of the 0.4.0 can() narrowing
+- **Tier**: SOLO
+- **Why deferred**: theoretical, and fixing it mid-release would mean re-tagging and
+  re-updating four apps for no live defect
+- **Context**: `HasRoles::can()` was split and now leans on a new
+  `protected function parentCan()` (src/Traits/HasRoles.php:263). A trait's methods land
+  in the host class's namespace, so any consuming model that defines its own
+  `parentCan()` fatals. Verified 2026-08-08 that none of afwd/ccstake/larquacious/nbss
+  does. Rename to `permixionParentCan()` (matching how `argumentsCarryPolicySubject()`
+  was deliberately put on the `Permixion` service rather than the trait) and ship with
+  the next change that touches the package.
+
 ### Support Pest 5 / PHPUnit 13 / PHP 8.4+ in the constraint matrix
 - **Added**: 2026-08-07 · harness health & efficiency session — apps are queued to upgrade to Pest 5 for Tia; consuming apps can't move until this package allows it
 - **Tier**: SOLO
