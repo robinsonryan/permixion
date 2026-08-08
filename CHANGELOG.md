@@ -5,9 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Versioning note (2026-08-08).** This package was renumbered down to `0.x` to
+> signal that its API is still settling. Tags were re-cut at the same commits:
+> old `vN.m.p` became `v0.N.<ordinal-within-N>`. Under Composer, `^0.4.0` resolves
+> to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
+> It will go to `1.0.0` when the consuming apps ship publicly.
+
 ## [Unreleased]
 
-## [4.0.0] - 2026-08-08
+## [0.4.0] - 2026-08-08
 
 ### Changed (BREAKING)
 - **`HasRoles::can()` no longer answers questions that carry a policy subject.**
@@ -60,18 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Gate::before` hook, because the `User` fixture used the trait without the
   contract — the same gap the README had.
 
-## [3.1.0] - 2026-08-07
+## [0.3.1] - 2026-08-07
 
 ### Added
 - `GlobalScope` sentinel, `teams.global_fallback`, and `hasRoleAnywhere()`.
 
-## [3.0.0] - 2026-07-xx
+## [0.3.0] - 2026-07-xx
 
 ### Changed (BREAKING)
 - Laravel 13 / PHP 8.4 support; hardened to Larastan level 8.
-- Requires `robinsonryan/taxon` `^2.0`.
+- Requires `robinsonryan/taxon` `^0.2.0`.
 
-## [Unreleased — folded into 4.0.0]
+### Also folded into 0.4.0 (previously unreleased)
 
 ### Fixed
 - `HasRoles::can()` no longer fatals on ability forms it cannot resolve. Laravel's
@@ -95,7 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   analyses `tests/Fixtures` alongside `src`, which is what surfaced the `can()` defects
   above. No public API changed.
 
-## [2.0.0] - 2026-05-06
+## [0.2.0] - 2026-05-06
 
 ### Changed (BREAKING)
 - Roles and permissions are now identified by `Tag.name` (verbatim) instead of
@@ -122,23 +128,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getTagValueIn`).
 
 ### Fixed
-- Existing test suite now passes (was 9/16 in v1.0.0). Added a regression
+- Existing test suite now passes (was 9/16 in v0.1.0). Added a regression
   suite (`tests/Feature/NameIdentityTest.php`) covering dotted permission
   names, slug-collision avoidance, wildcard matching against dotted names,
   and verbatim role round-tripping.
 
-### Migration from 1.x
+### Migration from 0.1.x
 This is a behavior change, not a public-API rename — most call sites do not
 need code changes. Verify:
 - Anywhere reading `getRoleNames()` / `getPermissionNames()` and expecting
   slug-form output. Switch to expecting verbatim names.
 - Anywhere using a permission name with a `Str::slug`-incompatible character
-  (`.`, `:`, `|`, `/`). Those now work correctly; collisions that v1.0.0
+  (`.`, `:`, `|`, `/`). Those now work correctly; collisions that v0.1.0
   silently created may surface as duplicate tags in the DB. Audit the
   `tags` table for entries under the permissions/roles categories whose
   `name` and `slug` no longer agree.
 
-## [1.0.0] - 2024-01-12
+## [0.1.0] - 2024-01-12
 
 ### Added
 - Initial release
