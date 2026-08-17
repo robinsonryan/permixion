@@ -11,7 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
 > It will go to `1.0.0` when the consuming apps ship publicly.
 
-## [Unreleased]
+## [0.5.1] - 2026-08-17
+
+Compatibility with Taxon 0.4.x and 0.5.x. Verified against Taxon **0.5.1**.
+
+**What the acceptance bar was.** Seeders and tests run against the new Taxon and
+produce the grants they claim to — proven by `tests/Feature/SeederAcceptanceTest.php`,
+which runs application-shaped seeder classes through `db:seed`, and by the full
+suite on PostgreSQL 18 in Taxon's `uuid7` mode. Nothing here was tested against a
+pre-existing installation's data, and this release makes no claim about one: every
+consumer is greenfield.
 
 ### Changed
 - **`robinsonryan/taxon` widens to `^0.3.0|^0.4.0|^0.5.0`.** The `^0.3.0` floor cut
@@ -36,23 +45,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package documents — and enforces it in the database rather than only in the
   `where('name', …)->exists()` check that precedes each insert.
 
-  **Upgrade note.** Rows written by an earlier version keep their slugged values;
-  nothing in this package or its consumers reads `Role::$slug` or
-  `Permission::$slug`, so no migration is required for correctness. An installation
-  that has both run Taxon's hardening migration *and* already holds a lossy slug can
-  still collide when a later name slugs onto that same value; re-slugging those rows
-  to their `name` clears it.
+  **What this means for rows written by an earlier version.** They keep the
+  slugged value they were given — this release changes what is *written*, not what
+  is stored, and it ships no data migration. Reads are unaffected, because every
+  lookup in this package is by `name`. Writes are not guaranteed to be: a new
+  name whose verbatim form lands on an old row's slugged value will be refused by
+  the database. That is now a named error rather than a raw SQL one (below), but it
+  is still an error. **No upgrade of an existing installation was tested**, so treat
+  the greenfield case as the only one this release stands behind.
 
 ### Added
+- **`RoleSlugCollision` and `PermissionSlugCollision`.** `createRole()` and
+  `createPermission()` catch the unique-constraint violation the hardened index
+  raises and rethrow it naming the role or permission that was refused and, where it
+  can be found, the sibling row holding that slug. The database error is kept as the
+  cause. Previously the caller got Taxon's raw `UniqueConstraintViolationException`:
+  an index name and a slug value, neither of which any Permixion API accepts or
+  returns. A same-name create is unchanged — that is still caught before the insert
+  and still throws `RoleAlreadyExists` / `PermissionAlreadyExists`.
+
+- **A seeder acceptance suite** (`tests/Feature/SeederAcceptanceTest.php`). Role and
+  permission creation, permission syncing, user assignment and re-running are
+  exercised through `db:seed` with seeder classes shaped the way a consuming
+  application's are, rather than by calling the engine directly. Two shapes are
+  deliberate: a user created with `createQuietly()`, and a whole run inside
+  `Model::withoutEvents()`. Both suppress the model events Taxon 0.5.0 used to flush
+  a deferred tag assignment — the defect Taxon 0.5.1 fixed — and seeders are exactly
+  where they live. This package assigns through the `tags()` relation rather than a
+  tag attribute, so it was never exposed; the cases stay to keep proving it.
+
+- **A check that the Taxon this suite runs against is the Taxon it claims**
+  (`tests/Feature/TaxonVersionTest.php`). Locally Taxon is a `path` repository whose
+  version is asserted by an `options.versions` pin in `composer.json`. The pin is now
+  compared both against the declared `require` constraint and against the checkout's
+  own changelog, so a pin left behind fails the suite. Leaving that unchecked is what
+  let Taxon 0.4.0's index hardening run here unnoticed for a release.
+
 - **A PostgreSQL test suite for Taxon's `uuid7` mode** (`tests/Postgres/`), covering
   role and permission writes where every key — tag, pivot and consumer model — comes
   from a `uuidv7()` column default. It pins that keys are database-generated (drop
-  the default and role creation fails), that pivot rows carry the user's UUID, and
-  that role assignment on an **unsaved** model still fails loudly rather than writing
-  a keyless pivot row: Taxon 0.5.0 defers a *tag attribute* assigned before a model
-  has a key, and this package writes through the `tags()` relation, which that
-  deferral does not cover. The rest of the suite still runs on SQLite in-memory,
-  where a column-type defect is unfalsifiable — see the 0.5.0 note below.
+  the default and role creation fails — on `tags` **and** on `taggables`, since the
+  pivot is a second write path), that pivot rows carry the user's UUID, and that role
+  assignment on an **unsaved** model still fails loudly rather than writing a keyless
+  pivot row: Taxon 0.5.0 defers a *tag attribute* assigned before a model has a key,
+  and this package writes through the `tags()` relation, which that deferral does not
+  cover. The rest of the suite still runs on SQLite in-memory, where a column-type
+  defect is unfalsifiable — see the 0.5.0 note below.
+
+  It builds and drops tables, so it runs in a database of its own — `db_testing`,
+  created on first run — and refuses to start if that name resolves to the
+  development database. Override with `PGDATABASE_TESTING`.
 
 ## [0.5.0] - 2026-08-08
 
