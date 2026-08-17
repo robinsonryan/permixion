@@ -44,6 +44,28 @@ test('two permissions with similar slugs are distinct', function (): void {
         ->and(count(Permixion::getAllPermissions()))->toBe(3);
 });
 
+/*
+ * The slug column carries the identity too, verbatim.
+ *
+ * Taxon 0.4.0 made `tags_unique_slug_parent_tenant` enforce uniqueness over
+ * COALESCE'd nulls, so two sibling tags may no longer share a slug. A slug run
+ * through Str::slug is lossy — 'account.view' and 'accountview' both come out
+ * 'accountview' — which would make two legitimately distinct permissions
+ * collide at the database level. Writing the name verbatim keeps the index
+ * enforcing exactly the identity this package already documents.
+ */
+test('a permission stores its name verbatim as the tag slug', function (): void {
+    $permission = Permixion::createPermission('work_order.assign');
+
+    expect($permission->tag()->slug)->toBe('work_order.assign');
+});
+
+test('a role stores its name verbatim as the tag slug', function (): void {
+    $role = Permixion::createRole('shop_manager');
+
+    expect($role->tag()->slug)->toBe('shop_manager');
+});
+
 test('role.givePermissionTo binds dotted permissions correctly', function (): void {
     Permixion::createPermission('qc_checklist.complete');
     Permixion::createPermission('work_order.assign');

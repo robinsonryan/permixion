@@ -156,6 +156,15 @@ deliberately bypasses Taxon's `addTag`/`hasTagIn` helpers because those run inpu
 through `Str::slug`, which would mangle `posts.create` into `postscreate` and
 collapse distinct permissions together. Any new lookup path must match on `name`.
 
+The `slug` column is written **verbatim from the name** for the same reason
+[T: src/Permixion.php `createRole()` / `createPermission()`]. Taxon 0.4.0's
+`harden_tags_unique_index_against_nulls` migration made
+`tags_unique_slug_parent_tenant` enforce uniqueness over `COALESCE`'d nulls, so two
+sibling tags may no longer share a slug — and a slugged copy is lossy, so
+`account.view` and `accountview` collided on insert. Verbatim is the only mapping
+injective on the name, and it leaves the index enforcing precisely the identity
+above. Pinned by `NameIdentityTest`.
+
 Other concepts worth knowing:
 
 - **Scope** (`RobinsonRyan\Taxon\Contracts\Scope`) — resolved from route /
@@ -195,9 +204,12 @@ Other concepts worth knowing:
    taxon are live for permixion's suite without a `composer update`. Composer would
    guess that checkout's version from the checked-out **branch** (`dev-master`), which
    satisfies no real constraint, so the repository entry pins it with
-   `options.versions => {"robinsonryan/taxon": "0.3.x-dev"}` — bump that by hand
+   `options.versions => {"robinsonryan/taxon": "0.5.x-dev"}` — bump that by hand
    whenever the `require` constraint on taxon moves to a new minor, or the local
-   install stops resolving.
+   install stops resolving. **The pin is a claim about what that checkout holds,
+   and nothing checks it**: leave it behind and the suite silently runs newer
+   taxon code under an older version number, which is how taxon 0.4.0's tag
+   uniqueness hardening went unnoticed here for a release.
 6. **PHPStan (level 8) analyses `src` and `tests/Fixtures` only** — not the test
    files. A type error inside a `.php` test is caught by nothing.
 7. **The `parentCan()` guard in `HasRoles` looks redundant to the analyser and is
@@ -234,9 +246,16 @@ Full definition: `imports/package-quality-gate.md`. Skill: `/package-quality`.
 Pest 4 + Orchestra Testbench against **SQLite in-memory** — see
 `tests/TestCase.php`, which also forces `taxon.id_type => incrementing` and
 `permixion.strict => true`, loads Taxon's migrations out of `vendor/`, and creates
-the `users` / `teams` / `posts` fixture tables. The DDEV Postgres service exists
-but the suite does not use it; if you add a test needing real Postgres behaviour,
-change the connection deliberately rather than assuming it is already there.
+the `users` / `teams` / `posts` fixture tables.
+
+**`tests/Postgres/` is the exception, and the pattern to copy.** It runs against
+the DDEV Postgres service on its own connection, in the `db` database, because it
+needs `tags`/`taggables` built in Taxon's `uuid7` mode — a `uuidv7()` column
+default that SQLite cannot express at all. It rebuilds that schema per test and
+skips loudly where no server is reachable. Everything else still runs on SQLite,
+where `uuid`, `bigint` and `varchar` collapse into one loose affinity and a
+column-type defect is unfalsifiable; if a new test turns on real database
+behaviour, put it here rather than assuming the shared connection will show it.
 
 ```bash
 ddev composer test

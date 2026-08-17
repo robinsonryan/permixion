@@ -24,6 +24,15 @@ class Permixion
     | Roles and permissions are identified by Tag.name (verbatim), not slug.
     | This preserves delimiter-bearing identifiers like 'posts.create' that
     | Str::slug would otherwise mangle.
+    |
+    | The slug column is written verbatim from the name for the same reason.
+    | Taxon 0.4.0's harden_tags_unique_index_against_nulls migration makes
+    | `tags_unique_slug_parent_tenant` enforce uniqueness over COALESCE'd nulls,
+    | so two sibling tags may no longer share a slug. Str::slug is lossy —
+    | 'account.view' and 'accountview' both reduce to 'accountview' — so a
+    | slugged copy would make two legitimately distinct permissions collide in
+    | the database. Verbatim is the only mapping that is injective on the name,
+    | which leaves the index enforcing exactly the identity documented above.
     */
 
     /**
@@ -43,7 +52,7 @@ class Permixion
 
         $tag = Tag::create([
             'name' => $name,
-            'slug' => str()->slug($name),
+            'slug' => $name,
             'parent_id' => $category->id,
             'assignable' => true,
         ]);
@@ -131,7 +140,7 @@ class Permixion
 
         $tag = Tag::create([
             'name' => $name,
-            'slug' => str()->slug($name),
+            'slug' => $name,
             'parent_id' => $category->id,
             'assignable' => true,
         ]);

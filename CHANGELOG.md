@@ -13,6 +13,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`robinsonryan/taxon` widens to `^0.3.0|^0.4.0|^0.5.0`.** The `^0.3.0` floor cut
+  in 0.5.0 is read by Composer as `>=0.3.0 <0.4.0`, so it excluded every Taxon
+  release from 0.4.0 onward — including 0.5.0, which is where PostgreSQL took over
+  generating `tags.id` and `taggables.id` from their `uuidv7()` column defaults. Any
+  application on both packages had to choose one of them to hold back. The floor
+  stays at 0.3.0 for the schema reason recorded under 0.5.0 below; nothing about the
+  API surface argues for narrowing it.
+
+- **A role or permission now stores its name verbatim in the tag's `slug` column**
+  (`Permixion::createRole()`, `Permixion::createPermission()`), where it previously
+  stored `Str::slug($name)`. Identity was already the name — this makes the column
+  that the database indexes agree with it.
+
+  Taxon 0.4.0's `harden_tags_unique_index_against_nulls` migration rebuilt
+  `tags_unique_slug_parent_tenant` over `COALESCE`'d nulls, so two sibling tags may
+  no longer share a slug. `Str::slug` is lossy: `account.view` and `accountview` both
+  reduce to `accountview`, so two legitimately distinct permissions collided on
+  insert with a `UniqueConstraintViolationException`. Verbatim is the only mapping
+  injective on the name, which leaves that index enforcing exactly the identity this
+  package documents — and enforces it in the database rather than only in the
+  `where('name', …)->exists()` check that precedes each insert.
+
+  **Upgrade note.** Rows written by an earlier version keep their slugged values;
+  nothing in this package or its consumers reads `Role::$slug` or
+  `Permission::$slug`, so no migration is required for correctness. An installation
+  that has both run Taxon's hardening migration *and* already holds a lossy slug can
+  still collide when a later name slugs onto that same value; re-slugging those rows
+  to their `name` clears it.
+
+### Added
+- **A PostgreSQL test suite for Taxon's `uuid7` mode** (`tests/Postgres/`), covering
+  role and permission writes where every key — tag, pivot and consumer model — comes
+  from a `uuidv7()` column default. It pins that keys are database-generated (drop
+  the default and role creation fails), that pivot rows carry the user's UUID, and
+  that role assignment on an **unsaved** model still fails loudly rather than writing
+  a keyless pivot row: Taxon 0.5.0 defers a *tag attribute* assigned before a model
+  has a key, and this package writes through the `tags()` relation, which that
+  deferral does not cover. The rest of the suite still runs on SQLite in-memory,
+  where a column-type defect is unfalsifiable — see the 0.5.0 note below.
+
 ## [0.5.0] - 2026-08-08
 
 ### Changed (BREAKING)

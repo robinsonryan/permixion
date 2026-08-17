@@ -4,6 +4,21 @@
 > convention: `$CLAUDE_HARNESS_DIR/notes/implementation-queue.md`. Hand-editing is fine.
 
 ## Queued
+### Move the rest of the suite off SQLite onto PostgreSQL
+- **Added**: 2026-08-17 · the taxon 0.5.0 compatibility pass
+- **Tier**: SOLO
+- **Why deferred**: doing it inside a dependency bump would have mixed "the bump is
+  safe" with "ninety tests changed engine", and the two need separate evidence
+- **Context**: `tests/TestCase.php` still runs SQLite in-memory, against the standing
+  rule that tests run on the engine production runs. It is not academic here: SQLite
+  collapses `uuid`, `bigint` and `varchar` into one loose affinity, which is how the
+  `taggable_id` column-type defect fixed in taxon 0.3.0 survived unnoticed on both
+  sides, and it cannot express the `uuidv7()` column default at all. `tests/Postgres/`
+  now runs on the DDEV Postgres service and is the pattern; taxon's own
+  `tests/TestCase.php` shows the shared-schema version (RefreshDatabase plus migrator
+  paths, fixture tables as migrations) that this suite would need, since its tables
+  are currently created per test in `setUpDatabase()`.
+
 ### Namespace the `parentCan()` trait helper
 - **Added**: 2026-08-08 · self-review of the 0.4.0 can() narrowing
 - **Tier**: SOLO
