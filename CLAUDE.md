@@ -156,6 +156,23 @@ deliberately bypasses Taxon's `addTag`/`hasTagIn` helpers because those run inpu
 through `Str::slug`, which would mangle `posts.create` into `postscreate` and
 collapse distinct permissions together. Any new lookup path must match on `name`.
 
+The `slug` column is written **verbatim from the name** for the same reason
+[T: src/Permixion.php `createRole()` / `createPermission()`]. Taxon 0.4.0's
+`harden_tags_unique_index_against_nulls` migration made
+`tags_unique_slug_parent_tenant` enforce uniqueness over `COALESCE`'d nulls, so two
+sibling tags may no longer share a slug — and a slugged copy is lossy, so
+`account.view` and `accountview` collided on insert. Verbatim is the only mapping
+injective on the name, and it leaves the index enforcing precisely the identity
+above. Pinned by `NameIdentityTest`.
+
+When that index refuses the write anyway — a row from an earlier version holding
+the slugged value a new name needs — `createRole()` / `createPermission()` catch
+it and rethrow `RoleSlugCollision` / `PermissionSlugCollision`, naming the item
+refused and the sibling holding the slug, with the database error as the cause
+[T: src/Exceptions/RoleSlugCollision.php]. Pinned by `SlugCollisionTest`. A
+same-name create is caught before the insert and still throws
+`RoleAlreadyExists` / `PermissionAlreadyExists`.
+
 Other concepts worth knowing:
 
 - **Scope** (`RobinsonRyan\Taxon\Contracts\Scope`) — resolved from route /
@@ -195,9 +212,14 @@ Other concepts worth knowing:
    taxon are live for permixion's suite without a `composer update`. Composer would
    guess that checkout's version from the checked-out **branch** (`dev-master`), which
    satisfies no real constraint, so the repository entry pins it with
-   `options.versions => {"robinsonryan/taxon": "0.3.x-dev"}` — bump that by hand
+   `options.versions => {"robinsonryan/taxon": "0.5.x-dev"}` — bump that by hand
    whenever the `require` constraint on taxon moves to a new minor, or the local
-   install stops resolving.
+   install stops resolving. The pin is a claim about what that checkout holds, and
+   leaving it behind means the suite runs newer taxon code under an older version
+   number — which is how taxon 0.4.0's tag uniqueness hardening went unnoticed
+   here for a release. `tests/Feature/TaxonVersionTest.php` now falsifies that
+   claim two ways: the pin against the `require` constraint, and the pin against
+   the taxon checkout's own changelog. A stale pin fails the gate.
 6. **PHPStan (level 8) analyses `src` and `tests/Fixtures` only** — not the test
    files. A type error inside a `.php` test is caught by nothing.
 7. **The `parentCan()` guard in `HasRoles` looks redundant to the analyser and is
@@ -234,9 +256,25 @@ Full definition: `imports/package-quality-gate.md`. Skill: `/package-quality`.
 Pest 4 + Orchestra Testbench against **SQLite in-memory** — see
 `tests/TestCase.php`, which also forces `taxon.id_type => incrementing` and
 `permixion.strict => true`, loads Taxon's migrations out of `vendor/`, and creates
-the `users` / `teams` / `posts` fixture tables. The DDEV Postgres service exists
-but the suite does not use it; if you add a test needing real Postgres behaviour,
-change the connection deliberately rather than assuming it is already there.
+the `users` / `teams` / `posts` fixture tables.
+
+**`tests/Postgres/` is the exception, and the pattern to copy.** It runs against
+the DDEV Postgres service on its own connection, because it needs
+`tags`/`taggables` built in Taxon's `uuid7` mode — a `uuidv7()` column default
+that SQLite cannot express at all. It rebuilds that schema per test and skips
+loudly where no server is reachable.
+
+It builds and drops tables, so it does that in **`db_testing`**, never the
+development `db`: isolation comes from a separate database. The file creates
+`db_testing` on first run over a maintenance connection, and refuses to start at
+all if the two names resolve the same, so the rule is enforced rather than
+configured. `PGDATABASE_TESTING` overrides the name. The database is created by
+the test rather than by a DDEV post-start hook on purpose — a hook only fires on
+`ddev restart`, and a precondition that can go stale is the class of defect this
+file exists to catch. Everything else still runs on SQLite,
+where `uuid`, `bigint` and `varchar` collapse into one loose affinity and a
+column-type defect is unfalsifiable; if a new test turns on real database
+behaviour, put it here rather than assuming the shared connection will show it.
 
 ```bash
 ddev composer test
@@ -251,11 +289,21 @@ no-deny and no-throw guarantees; `NameIdentityTest` pins name-not-slug identity;
 `GlobalScopeAndFallbackTest` pins scope semantics. These are characterization
 tests — if one goes red you have changed an authorization decision, not a detail.
 
+`SeederAcceptanceTest` is the release bar for a Taxon upgrade: it drives role and
+permission seeding through `db:seed` with application-shaped seeder classes,
+including a `createQuietly()` user and a whole run inside `Model::withoutEvents()`
+— the paths Taxon 0.5.0's deferred tag assignment lost a grant on.
+
 ## Releases
 
 **Never tag.** Automation may update, gate, commit and push a branch, then report
 "ready to tag" with a suggested version. Ryan cuts every tag. A version number is
 a claim about behavior that a green gate cannot substantiate.
+
+One recorded exception: `v0.5.1` was tagged by an agent on 2026-08-17 under an
+explicit one-off authorization from Ryan, covering the taxon-0.5 compatibility
+chain across taxon, permixion and the harness. It does not generalize — the rule
+above is unchanged for every later release.
 
 The package sits on `0.x` on purpose: under Composer `^0.4.0` resolves to
 `>=0.4.0 <0.5.0`, so **every minor may break**, which is the signal wanted while
