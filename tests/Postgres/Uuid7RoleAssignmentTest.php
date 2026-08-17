@@ -28,18 +28,43 @@ use RobinsonRyan\Permixion\Tests\Fixtures\Uuid7User;
 | column default needs PostgreSQL 18+; SQLite cannot express it at all, which is
 | why this file cannot live on the shared in-memory connection.
 |
+| It creates and drops tables, so it runs in a database of its own —
+| `db_testing`, never the development `db`. Isolation comes from a separate
+| database, and this file enforces that rather than assuming it: it refuses to
+| run if the two names resolve the same. The database is created here, on the
+| maintenance connection, instead of by a DDEV post-start hook, because the hook
+| only fires on `ddev restart` and this suite already owns its whole schema
+| lifecycle — a precondition that can go stale is the class of defect this file
+| exists to catch.
+|
 */
 
 const UUID7_CONNECTION = 'pgsql_permixion_uuid7';
 
+/**
+ * The maintenance connection, used only to create the test database. It points
+ * at the development database, so nothing in this file may build schema on it.
+ */
+const UUID7_MAINTENANCE_CONNECTION = 'pgsql_permixion_maintenance';
+
+function uuid7DevelopmentDatabase(): string
+{
+    return (string) env('PGDATABASE', 'db');
+}
+
+function uuid7TestDatabase(): string
+{
+    return (string) env('PGDATABASE_TESTING', 'db_testing');
+}
+
 /** @return array<string, mixed> */
-function uuid7ConnectionConfig(): array
+function uuid7ConnectionConfig(string $database): array
 {
     return [
         'driver' => 'pgsql',
         'host' => env('PGHOST', 'db'),
         'port' => env('PGPORT', '5432'),
-        'database' => env('PGDATABASE', 'db'),
+        'database' => $database,
         'username' => env('PGUSER', 'db'),
         'password' => env('PGPASSWORD', 'db'),
         'charset' => 'utf8',
@@ -48,6 +73,24 @@ function uuid7ConnectionConfig(): array
         'search_path' => 'public',
         'sslmode' => 'prefer',
     ];
+}
+
+/**
+ * Create the dedicated test database if it is not there yet.
+ *
+ * `CREATE DATABASE` cannot run inside a transaction and has no `IF NOT EXISTS`,
+ * so it is guarded by a catalog lookup on the maintenance connection.
+ */
+function ensureUuid7Database(): void
+{
+    $database = uuid7TestDatabase();
+
+    $exists = DB::connection(UUID7_MAINTENANCE_CONNECTION)
+        ->selectOne('select 1 from pg_database where datname = ?', [$database]);
+
+    if ($exists === null) {
+        DB::connection(UUID7_MAINTENANCE_CONNECTION)->statement('create database "'.$database.'"');
+    }
 }
 
 function dropUuid7Schema(): void
@@ -97,15 +140,32 @@ function pivotRowsFor(Uuid7User $user): ?object
 }
 
 beforeEach(function (): void {
-    config()->set('database.connections.'.UUID7_CONNECTION, uuid7ConnectionConfig());
+    if (uuid7TestDatabase() === uuid7DevelopmentDatabase()) {
+        throw new RuntimeException(
+            'This suite creates and drops tables, so it refuses to run in the development '
+            .'database ('.uuid7DevelopmentDatabase().'). Point PGDATABASE_TESTING at a database of its own.'
+        );
+    }
+
+    config()->set(
+        'database.connections.'.UUID7_MAINTENANCE_CONNECTION,
+        uuid7ConnectionConfig(uuid7DevelopmentDatabase())
+    );
 
     try {
-        DB::connection(UUID7_CONNECTION)->getPdo();
+        DB::connection(UUID7_MAINTENANCE_CONNECTION)->getPdo();
     } catch (Throwable $e) {
         $this->markTestSkipped(
             'No PostgreSQL server reachable ('.$e->getMessage().'). Run this suite inside DDEV.'
         );
     }
+
+    ensureUuid7Database();
+
+    config()->set(
+        'database.connections.'.UUID7_CONNECTION,
+        uuid7ConnectionConfig(uuid7TestDatabase())
+    );
 
     dropUuid7Schema();
     migrateUuid7Schema();
@@ -154,6 +214,22 @@ describe('the keys come from the database', function (): void {
         $this->user->assignRole('shop_manager');
 
         expect(pivotRowsFor($this->user)?->id)->toBeUuidV7();
+    });
+
+    /*
+     * The shape assertion above cannot tell a database-generated key from
+     * `Str::uuid7()`, and the pivot is a second write path: `tags()` sets
+     * `->using()`, so attach() saves a `Taggable` model that could start minting
+     * its own key without any other test noticing. Same probe as for `tags`,
+     * around the assignment rather than the creation.
+     */
+    it('generates nothing in PHP for the pivot either — without the column default, assignment fails', function (): void {
+        Permixion::createRole('shop_manager');
+
+        DB::connection(UUID7_CONNECTION)->statement('alter table taggables alter column id drop default');
+
+        expect(fn (): Uuid7User => $this->user->assignRole('shop_manager'))->toThrow(QueryException::class)
+            ->and(DB::connection(UUID7_CONNECTION)->table('taggables')->count())->toBe(0);
     });
 });
 
