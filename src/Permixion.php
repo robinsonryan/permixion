@@ -3,11 +3,14 @@
 namespace RobinsonRyan\Permixion;
 
 use Illuminate\Contracts\Auth\Access\Authorizable;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use RobinsonRyan\Permixion\Exceptions\PermissionAlreadyExists;
 use RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist;
+use RobinsonRyan\Permixion\Exceptions\PermissionSlugCollision;
 use RobinsonRyan\Permixion\Exceptions\RoleAlreadyExists;
 use RobinsonRyan\Permixion\Exceptions\RoleDoesNotExist;
+use RobinsonRyan\Permixion\Exceptions\RoleSlugCollision;
 use RobinsonRyan\Permixion\Models\Permission;
 use RobinsonRyan\Permixion\Models\Role;
 use RobinsonRyan\Taxon\Contracts\Scope;
@@ -50,12 +53,16 @@ class Permixion
             return $this->findRoleOrFail($name);
         }
 
-        $tag = Tag::create([
-            'name' => $name,
-            'slug' => $name,
-            'parent_id' => $category->id,
-            'assignable' => true,
-        ]);
+        try {
+            $tag = Tag::create([
+                'name' => $name,
+                'slug' => $name,
+                'parent_id' => $category->id,
+                'assignable' => true,
+            ]);
+        } catch (UniqueConstraintViolationException $e) {
+            throw new RoleSlugCollision($name, $this->tagNameOccupyingSlug($category, $name), $e);
+        }
 
         $role = new Role($tag);
 
@@ -138,12 +145,16 @@ class Permixion
             return $this->findPermissionOrFail($name);
         }
 
-        $tag = Tag::create([
-            'name' => $name,
-            'slug' => $name,
-            'parent_id' => $category->id,
-            'assignable' => true,
-        ]);
+        try {
+            $tag = Tag::create([
+                'name' => $name,
+                'slug' => $name,
+                'parent_id' => $category->id,
+                'assignable' => true,
+            ]);
+        } catch (UniqueConstraintViolationException $e) {
+            throw new PermissionSlugCollision($name, $this->tagNameOccupyingSlug($category, $name), $e);
+        }
 
         $this->clearCache();
 
@@ -733,6 +744,20 @@ class Permixion
     protected function permissionsCategorySlug(): string
     {
         return config('permixion.categories.permissions', 'permissions');
+    }
+
+    /**
+     * The name of the sibling tag already holding a slug, for an error message.
+     *
+     * Best effort by design: it is called on the way out of a failed insert, and
+     * a caller that cannot be told *which* row collided is still better served
+     * by a named role than by a raw SQL error.
+     */
+    protected function tagNameOccupyingSlug(Tag $category, string $slug): ?string
+    {
+        $existing = $category->children()->where('slug', $slug)->first();
+
+        return $existing instanceof Tag ? $existing->name : null;
     }
 
     public function rolesCategory(): Tag
