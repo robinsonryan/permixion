@@ -296,14 +296,13 @@ including a `createQuietly()` user and a whole run inside `Model::withoutEvents(
 
 ## Releases
 
-**Never tag.** Automation may update, gate, commit and push a branch, then report
-"ready to tag" with a suggested version. Ryan cuts every tag. A version number is
-a claim about behavior that a green gate cannot substantiate.
-
-One recorded exception: `v0.5.1` was tagged by an agent on 2026-08-17 under an
-explicit one-off authorization from Ryan, covering the taxon-0.5 compatibility
-chain across taxon, permixion and the harness. It does not generalize — the rule
-above is unchanged for every later release.
+**Tag it yourself when it is releasable.** Cut the tag once the full gate is green
+on the merge commit, `CHANGELOG.md` names anything breaking in plain language, and
+the version follows caret-on-zero semver — on `0.x` a change that could break a
+consumer takes the minor, a fix takes the patch. Annotate it and push it with the
+merge. Stop and ask only when the gate is red, review findings are open, or the
+version choice is genuinely contested. Rule and reasoning: the laravel-package
+constitution §4. (Ruled 2026-08-18, replacing "Ryan cuts every tag".)
 
 The package sits on `0.x` on purpose: under Composer `^0.4.0` resolves to
 `>=0.4.0 <0.5.0`, so **every minor may break**, which is the signal wanted while
