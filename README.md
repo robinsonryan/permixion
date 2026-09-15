@@ -264,7 +264,7 @@ See the [docs](./docs) directory for detailed documentation:
 
 - PHP 8.2+
 - Laravel 12.x or 13.x
-- robinsonryan/taxon ^0.3.0|^0.4.0|^0.5.0 (`^2.0` no longer exists — Taxon
+- robinsonryan/taxon ^0.5.1|^0.6.0 (`^2.0` no longer exists — Taxon
   renumbered down to `0.x` on 2026-08-08 and re-cut its tags at the same commits)
 - PostgreSQL 18+ if you run Taxon in `uuid7` mode, whose keys come from a
   `uuidv7()` column default

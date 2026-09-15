@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
 > It will go to `1.0.0` when the consuming apps ship publicly.
 
+## [0.5.2] - 2026-09-15
+
+Compatibility with Taxon 0.6.x. Verified against Taxon **0.6.0**.
+
+### Changed
+- `robinsonryan/taxon` constraint is `^0.5.1|^0.6.0`. Taxon 0.6.0 ships `uuid7` as its
+  default `id_type`; this package sets nothing itself, so a consumer's own `taxon.id_type`
+  still governs. Consumers on 0.3.x/0.4.x taxon should move to 0.5.1+ first
+- Taxon is consumed by tag from GitHub (a `vcs` repository) instead of a local `path`
+  repository; the DDEV mount that served the path repository is gone
+
 ## [0.5.1] - 2026-08-17
 
 Compatibility with Taxon 0.4.x and 0.5.x. Verified against Taxon **0.5.1**.

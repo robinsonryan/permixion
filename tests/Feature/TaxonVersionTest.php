@@ -9,14 +9,13 @@ use Composer\InstalledVersions;
 | The Taxon this suite is actually running against
 |--------------------------------------------------------------------------
 |
-| Every byte of this package's state lives in Taxon, and locally Taxon is a
-| `path` repository (`../taxon`). Composer would take that checkout's version
-| from its branch name (`dev-master`), which satisfies nothing, so
-| `composer.json` pins it with `options.versions`. That pin is a *claim* about
-| what the checkout holds, and until this file existed nothing checked it — the
-| exact mechanism that let Taxon 0.4.0's tag-uniqueness hardening run under this
-| suite, unnoticed, for a whole release. A doc note recording that gap does not
-| fail a build; these two assertions do.
+| Every byte of this package's state lives in Taxon. Since 0.5.2 Taxon is
+| consumed by tag from GitHub, like every other consumer, so the first assertion
+| is the one that matters day to day: the installed release must sit inside the
+| `require` constraint. The second only fires for a `-dev` install — someone
+| pointing Composer at a local checkout while developing both packages — and
+| guards the `options.versions` pin such a setup needs, which is how Taxon
+| 0.4.0's tag-uniqueness hardening once ran under this suite unnoticed.
 |
 */
 

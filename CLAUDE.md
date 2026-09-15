@@ -207,19 +207,14 @@ Other concepts worth knowing:
    explicitly, pass `GlobalScope::instance()`.
 4. **`composer.lock` is gitignored here** (library, not application). Refreshing it
    is local verification; it is never part of a commit.
-5. **`robinsonryan/taxon` is a path repository** (`../taxon`), mounted into the web
-   container at `/var/www/taxon` by `.ddev/docker-compose.taxon.yaml`. Changes to
-   taxon are live for permixion's suite without a `composer update`. Composer would
-   guess that checkout's version from the checked-out **branch** (`dev-master`), which
-   satisfies no real constraint, so the repository entry pins it with
-   `options.versions => {"robinsonryan/taxon": "0.5.x-dev"}` — bump that by hand
-   whenever the `require` constraint on taxon moves to a new minor, or the local
-   install stops resolving. The pin is a claim about what that checkout holds, and
-   leaving it behind means the suite runs newer taxon code under an older version
-   number — which is how taxon 0.4.0's tag uniqueness hardening went unnoticed
-   here for a release. `tests/Feature/TaxonVersionTest.php` now falsifies that
-   claim two ways: the pin against the `require` constraint, and the pin against
-   the taxon checkout's own changelog. A stale pin fails the gate.
+5. **`robinsonryan/taxon` is consumed by tag from GitHub** (a `vcs` repository),
+   the same way every application consumes this package. A taxon change reaches
+   this suite only after taxon tags it and `ddev composer update robinsonryan/taxon`
+   runs here — never through a local path mount. `tests/Feature/TaxonVersionTest.php`
+   fails the gate if the installed taxon sits outside the `require` constraint. If
+   you temporarily point Composer at a local checkout to develop both packages,
+   pin it with `options.versions` and the second assertion in that file checks the
+   pin against the checkout's changelog; remove the path entry before committing.
 6. **PHPStan (level 8) analyses `src` and `tests/Fixtures` only** — not the test
    files. A type error inside a `.php` test is caught by nothing.
 7. **The `parentCan()` guard in `HasRoles` looks redundant to the analyser and is
