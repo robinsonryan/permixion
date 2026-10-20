@@ -9,27 +9,17 @@ Composer name: `robinsonryan/permixion` — a **library**, not an application.
 
 ## Conventions
 
-@import ./constitution.md
-@import ./imports/package-conventions.md
-@import ./imports/package-quality-gate.md
-@import ./imports/testing-conventions.md
-@import ./imports/php-conventions.md
-@import ./imports/git-conventions.md
+@.claude/constitution.md
+@.claude/stack.md
 
-> Linking the `laravel-package` stack also drops the inherited Laravel app
-> conventions into `.claude/imports/` — `authorization-conventions.md`,
-> `frontend-conventions.md`, `pwa-conventions.md`, `ddev-worktrees.md`. They are
-> **deliberately not imported above**: they describe Inertia `can` maps, app-shaped
-> Vite wiring, and nested app worktrees, none of which exist in a package. Read
-> them if a question genuinely calls for one; do not load them by default.
->
-> Permixion has **no frontend half** — there is no `resources/`, no build step, no
-> `package.json`. `frontend-conventions.md` stays out.
+> Which rules load is set by `harness.yaml` and assembled into `.claude/stack.md`
+> (`harness stack apply`); a package with a frontend half adds the frontend layers
+> there (today: `yikes`, `four-corners`). Don't import convention files by hand.
 
 > `.claude/` is a set of **harness symlinks** and is gitignored — a fresh clone has
-> none of them and the `@import`s above resolve to nothing. If a convention file is
+> none of them and the imports above resolve to nothing. If a convention file is
 > missing, restore the link rather than guessing:
-> `~/workspace/harness/link.sh project laravel-package $(pwd)`
+> `harness stack apply`
 
 ## The sharpest edge: two authorization short-circuits
 
