@@ -2,9 +2,14 @@
 
 namespace RobinsonRyan\Permixion;
 
+use ArrayObject;
 use Illuminate\Contracts\Auth\Access\Authorizable;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
+use InvalidArgumentException;
+use RobinsonRyan\Permixion\Contracts\CanBeInactive;
 use RobinsonRyan\Permixion\Exceptions\PermissionAlreadyExists;
 use RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist;
 use RobinsonRyan\Permixion\Exceptions\PermissionSlugCollision;
@@ -16,6 +21,7 @@ use RobinsonRyan\Permixion\Models\Role;
 use RobinsonRyan\Taxon\Contracts\Scope;
 use RobinsonRyan\Taxon\Models\Tag;
 use RobinsonRyan\Taxon\Models\Taggable;
+use stdClass;
 
 class Permixion
 {
@@ -54,12 +60,7 @@ class Permixion
         }
 
         try {
-            $tag = Tag::create([
-                'name' => $name,
-                'slug' => $name,
-                'parent_id' => $category->id,
-                'assignable' => true,
-            ]);
+            $tag = $this->insertTag($name, $category);
         } catch (UniqueConstraintViolationException $e) {
             throw new RoleSlugCollision($name, $this->tagNameOccupyingSlug($category, $name), $e);
         }
@@ -146,12 +147,7 @@ class Permixion
         }
 
         try {
-            $tag = Tag::create([
-                'name' => $name,
-                'slug' => $name,
-                'parent_id' => $category->id,
-                'assignable' => true,
-            ]);
+            $tag = $this->insertTag($name, $category);
         } catch (UniqueConstraintViolationException $e) {
             throw new PermissionSlugCollision($name, $this->tagNameOccupyingSlug($category, $name), $e);
         }
@@ -326,32 +322,303 @@ class Permixion
         return false;
     }
 
+    /**
+     * Whether the holder may do $permission in $scope: its effective
+     * permissions, so every through, ceiling, inactive state and the super-admin
+     * role are honoured. The scope is taken as given (null = unscoped rows).
+     */
     public function userHasPermission(
         Authorizable $user,
         string $permission,
         ?Scope $scope = null
     ): bool {
-        if (! method_exists($user, 'tags')) {
+        if (! $user instanceof Model) {
             return false;
         }
 
-        $roleNames = $this->getUserRoleNames($user, $scope);
+        return $this->effectivePermissionsFor($user, $scope)->grants($permission);
+    }
 
-        foreach ($roleNames as $roleName) {
-            $rolePermissions = $this->getPermissionsForRole($roleName);
-
-            if (in_array($permission, $rolePermissions, true)) {
-                return true;
-            }
-
-            foreach ($rolePermissions as $rolePermission) {
-                if ($this->permissionMatches($permission, $rolePermission)) {
-                    return true;
-                }
-            }
+    /**
+     * The Scope a gate-style $arguments value names, if any: a bare Scope, or a
+     * Scope first in an array / ArrayAccess. `can('x', $team)` and
+     * `can('x', [$team])` must mean the same thing, as they do to Laravel.
+     */
+    public function scopeFromArguments(mixed $arguments): ?Scope
+    {
+        if ($arguments instanceof Scope) {
+            return $arguments;
         }
 
-        return $this->userHasDirectPermission($user, $permission, $scope);
+        // Only subscript what is actually subscriptable: a plain object argument
+        // (`$user->can('update', $dto)`) must not fatal here.
+        if (is_array($arguments) || $arguments instanceof \ArrayAccess) {
+            $first = $arguments[0] ?? null;
+
+            return $first instanceof Scope ? $first : null;
+        }
+
+        return null;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Effective Permissions (acting for)
+    |--------------------------------------------------------------------------
+    |
+    | What a holder may do in a scope: the union, over its role assignments
+    | there, of (the role's permissions ∩ every through's effective
+    | permissions), plus its direct permissions — then cut by any request-scoped
+    | ceiling the instance carries (withCeiling()).
+    |
+    | Every failure mode narrows: an inactive holder, a cycle, a chain deeper
+    | than permixion.through.max_depth, a through holder or ceiling role that
+    | no longer exists — each contributes nothing.
+    */
+
+    public function effectivePermissionsFor(Model $holder, ?Scope $scope = null): EffectivePermissions
+    {
+        // Read live, never from the memo: deactivating the holder being checked
+        // must take effect at once.
+        if (! $this->isActiveHolder($holder)) {
+            return EffectivePermissions::none();
+        }
+
+        $memo = $this->effectiveMemo();
+        $key = $this->memoKey($holder, $scope);
+
+        if ($key === null) {
+            $effective = $this->computeEffective($holder, $scope, [], 0);
+        } else {
+            $memo[$key] ??= $this->computeEffective($holder, $scope, [], 0);
+
+            $effective = $memo[$key];
+        }
+
+        $ceilings = method_exists($holder, 'permixionCeilings') ? $holder->permixionCeilings() : [];
+
+        foreach ($ceilings as $ceiling) {
+            $effective = $effective->intersect($this->rolePermissionSet($ceiling));
+        }
+
+        return $effective;
+    }
+
+    /**
+     * Forget every effective-permission result memoised in this request.
+     *
+     * Permixion's own writes call this. Call it yourself only after changing,
+     * mid-request, something permixion cannot see — a through holder's active
+     * state, or a taggable row written behind permixion's back.
+     */
+    public function flushEffectivePermissions(): void
+    {
+        $this->effectiveMemo()->exchangeArray([]);
+    }
+
+    /**
+     * @param  array<int, string>  $path  holder identities already being evaluated
+     */
+    protected function computeEffective(Model $holder, ?Scope $scope, array $path, int $depth): EffectivePermissions
+    {
+        if (! $this->isActiveHolder($holder) || $holder->getKey() === null) {
+            return EffectivePermissions::none();
+        }
+
+        $identity = $this->holderIdentity($holder);
+
+        // A holder already on the path contributes nothing: a cycle caps to nothing.
+        if (in_array($identity, $path, true)) {
+            return EffectivePermissions::none();
+        }
+
+        $path[] = $identity;
+
+        $assignments = $this->holderTagRows($holder, $this->rolesCategory(), $scope);
+        $throughs = $this->throughRowsFor(array_map(fn (stdClass $row): int|string => $row->assignment_id, $assignments));
+
+        $effective = EffectivePermissions::none();
+
+        foreach ($assignments as $assignment) {
+            $granted = $this->rolePermissionSet($assignment->name);
+
+            foreach ($throughs[(string) $assignment->assignment_id] ?? [] as $through) {
+                if ($granted->isEmpty()) {
+                    break;
+                }
+
+                $granted = $granted->intersect($this->throughPermissionSet($through, $scope, $path, $depth));
+            }
+
+            $effective = $effective->union($granted);
+        }
+
+        $direct = array_map(
+            fn (stdClass $row): string => $row->name,
+            $this->holderTagRows($holder, $this->permissionsCategory(), $scope)
+        );
+
+        return $effective->union(EffectivePermissions::of($direct));
+    }
+
+    /**
+     * @param  array<int, string>  $path
+     */
+    protected function throughPermissionSet(stdClass $through, ?Scope $scope, array $path, int $depth): EffectivePermissions
+    {
+        if ($through->holder_type !== null && $through->holder_id !== null) {
+            if ($depth + 1 > (int) config('permixion.through.max_depth', 5)) {
+                return EffectivePermissions::none();
+            }
+
+            $holder = $this->findHolder($through->holder_type, $through->holder_id);
+
+            return $holder instanceof Model
+                ? $this->computeEffective($holder, $scope, $path, $depth + 1)
+                : EffectivePermissions::none();
+        }
+
+        // A ceiling role. Its name is null when the role was deleted: the row then
+        // names nothing, and an assignment capped by nothing grants nothing.
+        return $through->role_name !== null
+            ? $this->rolePermissionSet($through->role_name)
+            : EffectivePermissions::none();
+    }
+
+    protected function rolePermissionSet(string $roleName): EffectivePermissions
+    {
+        if (config('permixion.super_admin.enabled') && $roleName === config('permixion.super_admin.role')) {
+            return EffectivePermissions::unlimited();
+        }
+
+        return EffectivePermissions::of($this->getPermissionsForRole($roleName));
+    }
+
+    protected function isActiveHolder(Model $holder): bool
+    {
+        return ! $holder instanceof CanBeInactive || $holder->isActiveHolder();
+    }
+
+    protected function holderIdentity(Model $holder): string
+    {
+        return $holder->getMorphClass().'#'.$holder->getKey();
+    }
+
+    protected function findHolder(string $type, string $id): ?Model
+    {
+        $class = Relation::getMorphedModel($type) ?? $type;
+
+        if (! class_exists($class) || ! is_subclass_of($class, Model::class)) {
+            return null;
+        }
+
+        return $class::query()->find($id);
+    }
+
+    /**
+     * The holder's taggable rows under one category (roles or permissions),
+     * read with the same scope rules as every other check.
+     *
+     * @return array<int, stdClass> rows of {assignment_id, name}
+     */
+    protected function holderTagRows(Model $holder, Tag $category, ?Scope $scope): array
+    {
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+        $tagTable = config('taxon.tables.tags', 'tags');
+
+        $query = Taggable::query()
+            ->join($tagTable, "{$tagTable}.id", '=', "{$pivotTable}.tag_id")
+            ->where("{$pivotTable}.taggable_type", $holder->getMorphClass())
+            ->where("{$pivotTable}.taggable_id", $holder->getKey())
+            ->where("{$tagTable}.parent_id", $category->getKey());
+
+        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
+
+        return $query->toBase()
+            ->get(["{$pivotTable}.id as assignment_id", "{$tagTable}.name as name"])
+            ->all();
+    }
+
+    /**
+     * Through rows for the given assignments, grouped by assignment id.
+     *
+     * @param  array<int, int|string>  $assignmentIds
+     * @return array<string, array<int, stdClass>> rows of {assignment_id, holder_type, holder_id, role_name}
+     */
+    protected function throughRowsFor(array $assignmentIds): array
+    {
+        if ($assignmentIds === []) {
+            return [];
+        }
+
+        $throughTable = $this->throughsTable();
+        $tagTable = config('taxon.tables.tags', 'tags');
+
+        $rows = Taggable::query()->getConnection()
+            ->table($throughTable)
+            ->leftJoin($tagTable, "{$tagTable}.id", '=', "{$throughTable}.role_id")
+            ->whereIn("{$throughTable}.assignment_id", $assignmentIds)
+            ->get([
+                "{$throughTable}.assignment_id",
+                "{$throughTable}.holder_type",
+                "{$throughTable}.holder_id",
+                "{$tagTable}.name as role_name",
+            ]);
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            $grouped[(string) $row->assignment_id][] = $row;
+        }
+
+        return $grouped;
+    }
+
+    protected function throughsTable(): string
+    {
+        return config('permixion.tables.assignment_throughs', 'permixion_assignment_throughs');
+    }
+
+    /**
+     * The request-scoped memo of root results. Bound `scoped`, so Octane and
+     * queue workers start every request and job with an empty one; nothing
+     * outlives the request that a role change could make stale.
+     *
+     * @return ArrayObject<string, EffectivePermissions>
+     */
+    protected function effectiveMemo(): ArrayObject
+    {
+        return app('permixion.effective-memo');
+    }
+
+    /**
+     * Per holder and scope, plus every setting the result depends on, so a
+     * config change mid-request cannot serve a stale answer.
+     */
+    protected function memoKey(Model $holder, ?Scope $scope): ?string
+    {
+        if ($holder->getKey() === null) {
+            return null;
+        }
+
+        $scopeKey = match (true) {
+            $scope instanceof GlobalScope => 'global',
+            $scope instanceof Scope => $scope->getScopeType().'#'.$scope->getScopeId(),
+            default => 'null',
+        };
+
+        return implode('|', [
+            $this->holderIdentity($holder),
+            $scopeKey,
+            json_encode([
+                config('permixion.teams.global_fallback'),
+                config('permixion.super_admin.enabled'),
+                config('permixion.super_admin.role'),
+                config('permixion.wildcards.enabled'),
+                config('permixion.wildcards.delimiter'),
+                config('permixion.through.max_depth'),
+            ]),
+        ]);
     }
 
     /*
@@ -416,25 +683,105 @@ class Permixion
             ->exists();
     }
 
-    public function attachRoleToUser(Authorizable $user, string $roleName, ?Scope $scope = null): void
+    /**
+     * @param  array<int, Model|Role|string>  $through  holders and/or ceiling roles
+     *                                                  the assignment acts through
+     */
+    public function attachRoleToUser(Authorizable $user, string $roleName, ?Scope $scope = null, array $through = []): void
     {
         if (! method_exists($user, 'tags')) {
             return;
         }
 
+        // Resolve every through before writing anything, so a bad one leaves no
+        // half-made assignment behind.
+        $throughRows = $this->resolveThroughs($through);
+
         if (config('permixion.strict')) {
-            $this->findRoleOrFail($roleName);
             $tag = $this->findRoleOrFail($roleName)->tag();
         } else {
             $tag = $this->findRole($roleName)?->tag()
                 ?? $this->createRole($roleName)->tag();
         }
 
-        if ($this->userTagPivotExists($user, $tag->id, $scope)) {
-            return;
+        if (! $this->userTagPivotExists($user, $tag->id, $scope)) {
+            $user->tags()->attach($tag->id, $this->scopePivotData($scope));
         }
 
-        $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+        if ($throughRows !== [] && $user instanceof Model) {
+            $this->addThroughs($this->userTagPivotId($user, $tag->id, $scope), $throughRows);
+        }
+
+        $this->flushEffectivePermissions();
+    }
+
+    /**
+     * @param  array<int, mixed>  $through
+     * @return array<int, array{holder_type: ?string, holder_id: ?string, role_id: int|string|null}>
+     */
+    protected function resolveThroughs(array $through): array
+    {
+        $rows = [];
+
+        foreach ($through as $item) {
+            if ($item instanceof Model) {
+                if (! $item->exists || $item->getKey() === null) {
+                    throw new InvalidArgumentException('A holder an assignment acts through must be saved first.');
+                }
+
+                $rows[] = ['holder_type' => $item->getMorphClass(), 'holder_id' => (string) $item->getKey(), 'role_id' => null];
+
+                continue;
+            }
+
+            if ($item instanceof Role) {
+                $rows[] = ['holder_type' => null, 'holder_id' => null, 'role_id' => $item->tag()->getKey()];
+
+                continue;
+            }
+
+            if (is_string($item)) {
+                $role = config('permixion.strict')
+                    ? $this->findRoleOrFail($item)
+                    : ($this->findRole($item) ?? $this->createRole($item));
+
+                $rows[] = ['holder_type' => null, 'holder_id' => null, 'role_id' => $role->tag()->getKey()];
+
+                continue;
+            }
+
+            throw new InvalidArgumentException('An assignment acts through a holder model, a Role, or a role name; got '.get_debug_type($item).'.');
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Add throughs to an assignment, skipping any it already has. Throughs are
+     * only ever added: more throughs can only narrow, so a write never widens.
+     *
+     * @param  array<int, array{holder_type: ?string, holder_id: ?string, role_id: int|string|null}>  $rows
+     */
+    protected function addThroughs(int|string $assignmentId, array $rows): void
+    {
+        $table = Taggable::query()->getConnection()->table($this->throughsTable());
+
+        foreach ($rows as $row) {
+            $exists = (clone $table)
+                ->where('assignment_id', $assignmentId)
+                ->where('holder_type', $row['holder_type'])
+                ->where('holder_id', $row['holder_id'])
+                ->where('role_id', $row['role_id'])
+                ->exists();
+
+            if (! $exists) {
+                (clone $table)->insert($row + [
+                    'assignment_id' => $assignmentId,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        }
     }
 
     public function detachRoleFromUser(Authorizable $user, string $roleName, ?Scope $scope = null): void
@@ -518,11 +865,11 @@ class Permixion
                 ?? $this->createPermission($permissionName)->tag();
         }
 
-        if ($this->userTagPivotExists($user, $tag->id, $scope)) {
-            return;
+        if (! $this->userTagPivotExists($user, $tag->id, $scope)) {
+            $user->tags()->attach($tag->id, $this->scopePivotData($scope));
         }
 
-        $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+        $this->flushEffectivePermissions();
     }
 
     public function detachPermissionFromUser(Authorizable $user, string $permissionName, ?Scope $scope = null): void
@@ -617,6 +964,18 @@ class Permixion
         return $query->exists();
     }
 
+    protected function userTagPivotId(Model $user, int|string $tagId, ?Scope $scope): int|string
+    {
+        $query = Taggable::query()
+            ->where('tag_id', $tagId)
+            ->where('taggable_type', $user->getMorphClass())
+            ->where('taggable_id', $user->getKey());
+
+        $this->applyScopeToPivot($query, $query->getModel()->getTable(), $scope);
+
+        return $query->toBase()->value('id');
+    }
+
     protected function deleteUserTagPivot(Authorizable $user, int|string $tagId, ?Scope $scope): void
     {
         $query = Taggable::query()
@@ -626,7 +985,15 @@ class Permixion
 
         $this->applyScopeToPivot($query, $query->getModel()->getTable(), $scope);
 
+        // An assignment's throughs go with it (there is no foreign key to cascade).
+        $query->getConnection()
+            ->table($this->throughsTable())
+            ->whereIn('assignment_id', (clone $query)->toBase()->pluck('id')->all())
+            ->delete();
+
         $query->delete();
+
+        $this->flushEffectivePermissions();
     }
 
     /*
@@ -747,6 +1114,25 @@ class Permixion
     }
 
     /**
+     * Insert a role or permission tag inside a savepoint.
+     *
+     * On PostgreSQL a failed statement aborts the surrounding transaction, so
+     * when the caller is already inside one (a seeder, a request wrapped in
+     * DB::transaction) the collision lookup that follows a refused insert would
+     * itself fail with "current transaction is aborted". The savepoint rolls back
+     * only the insert and leaves the caller's transaction usable.
+     */
+    protected function insertTag(string $name, Tag $category): Tag
+    {
+        return $category->getConnection()->transaction(fn (): Tag => Tag::create([
+            'name' => $name,
+            'slug' => $name,
+            'parent_id' => $category->id,
+            'assignable' => true,
+        ]));
+    }
+
+    /**
      * The name of the sibling tag already holding a slug, for an error message.
      *
      * Best effort by design: it is called on the way out of a failed insert, and
@@ -796,6 +1182,8 @@ class Permixion
 
     public function clearCache(): void
     {
+        $this->flushEffectivePermissions();
+
         if (! config('permixion.cache.enabled')) {
             return;
         }

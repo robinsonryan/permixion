@@ -11,6 +11,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
 > It will go to `1.0.0` when the consuming apps ship publicly.
 
+## [0.6.0] - Unreleased
+
+Acting for: assignments capped by the holders and roles they act through. A
+**minor** release because two authorization outcomes change — read *Changed*
+before upgrading.
+
+### Changed — behaviour that can alter an authorization decision
+- **A bare Scope argument now scopes `can()`.** `$user->can('posts.create', $team)`
+  checks within `$team`, exactly as `$user->can('posts.create', [$team])` always
+  did. Before 0.6.0 the bare form ignored `$team` and checked the ambient scope
+  (or unscoped rows when none resolves), so it could **grant on a permission held
+  only unscoped or in another team**. Code that relied on that will now be
+  refused; pass no argument, or the scope you mean.
+- **"Super admin" means an uncapped super admin.** The `Gate::before` hook and
+  `hasPermissionTo()` used to grant everything to any holder of the super-admin
+  role. They now grant everything only when that role is held without a through,
+  by an active holder, under no `withCeiling()`. Existing assignments have no
+  throughs and no holder implements `CanBeInactive` yet, so nothing changes until
+  you use the new features.
+- `Permixion::userHasPermission()` now answers from effective permissions, so it
+  honours throughs, ceilings and inactive holders — and now also grants for an
+  uncapped super admin, as `hasPermissionTo()` always did.
+- `syncRoles()` leaves roles it retains in place instead of detaching and
+  re-attaching them (so their throughs survive). The roles held afterwards are
+  the same as before.
+
+### Added
+- `assignRole($roles, ?Scope $scope = null, array $through = [])` — the assignment
+  is capped by every through: a holder model (what it may do in the same scope,
+  recursively) or a ceiling role (name or `Role`). Stored in a new table,
+  `permixion_assignment_throughs`; **run `php artisan migrate`**. Its migration
+  loads automatically, or publish it with `--tag=permixion-migrations`.
+- `effectivePermissions(?Scope $scope = null): Collection` on `HasRoles` and the
+  `HasPermissions` contract; `Permixion::effectivePermissionsFor(Model, ?Scope):
+  EffectivePermissions` on the engine.
+- `RobinsonRyan\Permixion\Contracts\CanBeInactive` (`isActiveHolder(): bool`): an
+  inactive holder has no permissions and caps everything acting through it.
+- `withCeiling(string|Role $role): static` — an immutable, request-scoped copy of
+  the holder capped at a role.
+- Config `permixion.through.max_depth` (default 5) and
+  `permixion.tables.assignment_throughs`.
+- `Permixion::scopeFromArguments()` and `Permixion::flushEffectivePermissions()`.
+- Effective permissions are memoised per request (a `scoped` binding), never
+  across requests; every permixion write clears the memo.
+
+### Fixed
+- Creating a role or permission inside a database transaction on PostgreSQL no
+  longer fails with "current transaction is aborted" when the slug collides: the
+  insert runs in a savepoint, so `RoleSlugCollision` / `PermissionSlugCollision`
+  is raised as intended.
+
+### Tests
+- The whole suite runs on PostgreSQL (DDEV's `db`), not SQLite. A checkout nested
+  at `.claude/worktrees/<slug>/` gets its own `testing_wt_<slug>` database,
+  created on first run; `PERMIXION_TEST_DB_*` override it.
+
 ## [0.5.2] - 2026-09-15
 
 Compatibility with Taxon 0.6.x. Verified against Taxon **0.6.0**.

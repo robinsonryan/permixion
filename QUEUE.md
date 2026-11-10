@@ -4,20 +4,19 @@
 > convention: `$CLAUDE_HARNESS_DIR/notes/implementation-queue.md`. Hand-editing is fine.
 
 ## Queued
-### Move the rest of the suite off SQLite onto PostgreSQL
-- **Added**: 2026-08-17 · the taxon 0.5.0 compatibility pass
-- **Tier**: SOLO
-- **Why deferred**: doing it inside a dependency bump would have mixed "the bump is
-  safe" with "ninety tests changed engine", and the two need separate evidence
-- **Context**: `tests/TestCase.php` still runs SQLite in-memory, against the standing
-  rule that tests run on the engine production runs. It is not academic here: SQLite
-  collapses `uuid`, `bigint` and `varchar` into one loose affinity, which is how the
-  `taggable_id` column-type defect fixed in taxon 0.3.0 survived unnoticed on both
-  sides, and it cannot express the `uuidv7()` column default at all. `tests/Postgres/`
-  now runs on the DDEV Postgres service and is the pattern; taxon's own
-  `tests/TestCase.php` shows the shared-schema version (RefreshDatabase plus migrator
-  paths, fixture tables as migrations) that this suite would need, since its tables
-  are currently created per test in `setUpDatabase()`.
+### Two routes to the same role collapse into one capped assignment
+- **Added**: 2026-11-10 · acting-for build (0.6.0)
+- **Tier**: needs a decision — it shapes the storage
+- **Why deferred**: the spec keys throughs to the assignment, and taxon's unique
+  index allows one assignment per (holder, role, scope)
+- **Context**: Pennywise's `User::roleOn()` takes the higher of a Membership and a
+  Firm route. When both name the same role, permixion holds one assignment carrying
+  the Firm grant as a through, so the Membership is capped too — narrower than
+  Pennywise (fails closed). Pinned by the KNOWN GAP test in
+  `tests/Feature/PennywiseParityTest.php`. Options: through *routes* (each
+  `assignRole` call with throughs adds an OR-ed route; a route-less call marks the
+  assignment uncapped; `removeRole` grows a `$through` to remove one route), or
+  Pennywise models the Firm route on a separate holder.
 
 ### Namespace the `parentCan()` trait helper
 - **Added**: 2026-08-08 · self-review of the 0.4.0 can() narrowing
@@ -32,20 +31,6 @@
   was deliberately put on the `Permixion` service rather than the trait) and ship with
   the next change that touches the package.
 
-### A bare `Scope` argument never actually scopes `can()`
-- **Added**: 2026-08-08 · self-review of the 0.4.0 can() narrowing
-- **Tier**: needs a decision — it changes an authorization outcome
-- **Why deferred**: pre-dates 0.4.0 and is unchanged by it; fixing it would alter what
-  is granted, which is not a lint fix
-- **Context**: `can('posts.create', [$team])` scopes correctly — the array form is read
-  at `$arguments[0]`. `can('posts.create', $team)` does **not**: the bare form falls
-  through scope extraction and checks with a null scope, so it can grant on an unscoped
-  row that the scoped form would refuse. Laravel treats `$ability, $arg` and
-  `$ability, [$arg]` as equivalent, so the asymmetry is surprising. `argumentsCarryPolicySubject()`
-  already classifies a bare Scope correctly (not a policy subject); only the extraction
-  block below it is array-shaped. Fix is small — but decide first whether the bare form
-  should scope (narrower, may remove grants) or stay unscoped (status quo).
-
 ### Support Pest 5 / PHPUnit 13 / PHP 8.4+ in the constraint matrix
 - **Added**: 2026-08-07 · harness health & efficiency session — apps are queued to upgrade to Pest 5 for Tia; consuming apps can't move until this package allows it
 - **Tier**: SOLO
@@ -59,6 +44,15 @@
 ## Blocked
 
 ## Archive
+
+### ~~Move the rest of the suite off SQLite onto PostgreSQL~~ — resolved 2026-11-10 in 0.6.0
+`tests/TestCase.php` runs on DDEV's Postgres with RefreshDatabase and migrator paths
+(fixture tables are migrations under `tests/Fixtures/database/migrations`), one
+database per worktree. The move surfaced a real defect: a slug collision inside a
+transaction aborted it on Postgres; fixed with a savepoint.
+
+### ~~A bare `Scope` argument never actually scopes `can()`~~ — resolved 2026-11-10 in 0.6.0
+Ryan ruled the bare form scopes (minor version). `can('x', $team)` ≡ `can('x', [$team])`.
 
 ### ~~Examine the `Gate::before` short-circuit~~ — resolved 2026-08-08 in 4.0.0
 Investigated, corrected, and closed. The mechanism was real but the exposure

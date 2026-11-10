@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\Tests\Fixtures\Uuid7User;
+use RobinsonRyan\Permixion\Tests\TestCase;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,7 +30,7 @@ use RobinsonRyan\Permixion\Tests\Fixtures\Uuid7User;
 | why this file cannot live on the shared in-memory connection.
 |
 | It creates and drops tables, so it runs in a database of its own —
-| `db_testing`, never the development `db`. Isolation comes from a separate
+| `<suite database>_uuid7`, never the development `db`. Isolation comes from a separate
 | database, and this file enforces that rather than assuming it: it refuses to
 | run if the two names resolve the same. The database is created here, on the
 | maintenance connection, instead of by a DDEV post-start hook, because the hook
@@ -52,9 +53,13 @@ function uuid7DevelopmentDatabase(): string
     return (string) env('PGDATABASE', 'db');
 }
 
+/**
+ * Derived from the main suite's per-checkout database, so two worktrees never
+ * build and drop this schema under each other.
+ */
 function uuid7TestDatabase(): string
 {
-    return (string) env('PGDATABASE_TESTING', 'db_testing');
+    return (string) env('PGDATABASE_TESTING', TestCase::databaseName().'_uuid7');
 }
 
 /** @return array<string, mixed> */
@@ -98,6 +103,7 @@ function dropUuid7Schema(): void
     $schema = Schema::connection(UUID7_CONNECTION);
 
     $schema->dropIfExists('uuid7_users');
+    $schema->dropIfExists('permixion_assignment_throughs');
     $schema->dropIfExists('taggables');
     $schema->dropIfExists('tags');
 }
@@ -115,6 +121,7 @@ function migrateUuid7Schema(): void
     $files = glob(__DIR__.'/../../vendor/robinsonryan/taxon/database/migrations/*.php');
     $files = $files === false ? [] : $files;
     sort($files);
+    $files[] = __DIR__.'/../../database/migrations/2024_01_05_000000_create_permixion_assignment_throughs_table.php';
 
     foreach ($files as $file) {
         $migration = require $file;
@@ -281,6 +288,32 @@ describe('role and permission writes against uuid keys', function (): void {
 
         expect($this->user->hasRole('shop_manager'))->toBeFalse()
             ->and(pivotRowsFor($this->user))->toBeNull();
+    });
+});
+
+describe('acting for, against uuid keys', function (): void {
+    it('stores throughs keyed by a uuid assignment and caps by them', function (): void {
+        Permixion::createPermission('work_order.assign');
+        Permixion::createPermission('work_order.close');
+        Permixion::createRole('technician', ['work_order.assign']);
+        Permixion::createRole('shop_manager', ['work_order.assign', 'work_order.close']);
+
+        $owner = Uuid7User::create(['name' => 'Owner', 'email' => 'owner@example.com']);
+        $owner->assignRole('technician');
+        $this->user->assignRole('shop_manager', null, [$owner, 'technician']);
+
+        $through = DB::connection(UUID7_CONNECTION)->table('permixion_assignment_throughs')->get();
+
+        expect($through)->toHaveCount(2)
+            ->and($through[0]->id)->toBeUuidV7()
+            ->and($through[0]->assignment_id)->toBe(pivotRowsFor($this->user)?->id)
+            ->and($through->pluck('holder_id')->filter()->first())->toBe($owner->getKey())
+            ->and($this->user->hasPermissionTo('work_order.assign'))->toBeTrue()
+            ->and($this->user->hasPermissionTo('work_order.close'))->toBeFalse();
+
+        $this->user->removeRole('shop_manager');
+
+        expect(DB::connection(UUID7_CONNECTION)->table('permixion_assignment_throughs')->count())->toBe(0);
     });
 });
 

@@ -62,6 +62,52 @@ test('a Scope passed as the first argument scopes the permission check', functio
 });
 
 /*
+| The bare-scope fix (0.6.0). Laravel treats `can($ability, $arg)` and
+| `can($ability, [$arg])` as the same call; before 0.6.0 the bare form skipped
+| scope extraction and checked the ambient scope instead.
+*/
+
+test('a bare Scope argument scopes the permission check, as the array form does', function (): void {
+    config()->set('permixion.teams.enabled', true);
+
+    $teamA = Team::create(['name' => 'Team A']);
+    $teamB = Team::create(['name' => 'Team B']);
+
+    $this->other->givePermissionTo('posts.create', $teamA);
+
+    expect($this->other->can('posts.create', $teamA))->toBeTrue()
+        ->and($this->other->can('posts.create', $teamB))->toBeFalse()
+        ->and($this->other->can('posts.create', $teamA))->toBe($this->other->can('posts.create', [$teamA]))
+        ->and($this->other->can('posts.create', $teamB))->toBe($this->other->can('posts.create', [$teamB]));
+});
+
+test('a bare Scope no longer falls back to an unscoped grant', function (): void {
+    // The old leak: a permission held only unscoped satisfied can('x', $team),
+    // because the bare Scope was ignored and the check ran unscoped.
+    $team = Team::create(['name' => 'Team A']);
+
+    $this->other->givePermissionTo('posts.create');
+
+    expect($this->other->can('posts.create', $team))->toBeFalse()
+        ->and($this->other->can('posts.create', [$team]))->toBeFalse()
+        ->and($this->other->can('posts.create'))->toBeTrue();
+});
+
+test('a bare Scope wins over the ambient scope', function (): void {
+    config()->set('permixion.teams.enabled', true);
+    config()->set('permixion.teams.resolver', 'callback');
+
+    $teamA = Team::create(['name' => 'Team A']);
+    $teamB = Team::create(['name' => 'Team B']);
+    config()->set('permixion.teams.callback', fn (): Team => $teamA);
+
+    $this->other->givePermissionTo('posts.create', $teamA);
+
+    expect($this->other->can('posts.create'))->toBeTrue()
+        ->and($this->other->can('posts.create', $teamB))->toBeFalse();
+});
+
+/*
 |--------------------------------------------------------------------------
 | Crash-safety, pinned by the fixes in ec4b5ef
 |--------------------------------------------------------------------------
