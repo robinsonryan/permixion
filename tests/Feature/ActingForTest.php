@@ -127,13 +127,81 @@ describe('storing throughs with an assignment', function (): void {
             ->and($this->agent->hasPermissionTo('reports.view', $this->team))->toBeTrue();
     });
 
-    it('syncRoles still removes roles left out of the list, throughs and all', function (): void {
+    it('syncRoles still removes roles left out of the list, its own through rows with them', function (): void {
         $this->agent->assignRole('accountant', $this->team, ['drafter']);
+        $accountantRow = DB::table('taggables')->where('taggable_id', $this->agent->getKey())->value('id');
 
         $this->agent->syncRoles(['reporter'], $this->team);
 
-        expect($this->agent->hasRole('accountant', $this->team))->toBeFalse()
+        $reporterRow = DB::table('taggables')->where('taggable_id', $this->agent->getKey())->value('id');
+
+        expect($this->agent->getAssignedRoleNames($this->team))->toBe(['reporter'])
+            ->and(DB::table('permixion_assignment_throughs')->where('assignment_id', $accountantRow)->count())->toBe(0)
+            // The drafter cap moved to reporter, which it cuts to nothing.
+            ->and(DB::table('permixion_assignment_throughs')->where('assignment_id', $reporterRow)->count())->toBe(1)
+            ->and($this->agent->effectivePermissions($this->team))->toBeEmpty();
+    });
+
+    it('syncRoles to a different role carries the replaced assignment\'s throughs to it — never widening', function (): void {
+        $this->owner->assignRole('viewer', $this->team);
+        $this->agent->assignRole('accountant', $this->team, [$this->owner]);
+
+        $this->agent->syncRoles(['bookkeeper'], $this->team);
+
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.read'])
+            ->and($this->agent->getAssignedRoleNames($this->team))->toBe(['bookkeeper'])
+            ->and($this->agent->hasPermissionTo('ledger.post', $this->team))->toBeFalse();
+
+        // The cap follows the owner, as it did on the replaced role.
+        $this->owner->syncRoles(['bookkeeper'], $this->team);
+
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.draft', 'ledger.post', 'ledger.read']);
+    });
+
+    it('syncRoles carries the throughs of every replaced capped assignment, which all apply', function (): void {
+        Permixion::createRole('poster', ['ledger.read', 'ledger.post']);
+        $this->agent->assignRole('drafter', $this->team, ['bookkeeper']);
+        $this->agent->assignRole('reporter', $this->team, ['poster']);
+
+        $this->agent->syncRoles(['accountant'], $this->team);
+
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.post', 'ledger.read']);
+    });
+
+    it('syncRoles to two new roles caps both by everything the replaced assignments acted through', function (): void {
+        Permixion::createRole('poster', ['ledger.read', 'ledger.post']);
+        $this->agent->assignRole('accountant', $this->team, ['bookkeeper']);
+        $this->agent->assignRole('drafter', $this->team, ['poster']);
+
+        $this->agent->syncRoles(['accountant', 'reporter'], $this->team);
+
+        // accountant is retained with its own cap; reporter is new and carries
+        // drafter's (poster), which cuts reports to nothing.
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.draft', 'ledger.post', 'ledger.read']);
+    });
+
+    it('syncRoles replacing only uncapped roles assigns the new ones uncapped', function (): void {
+        $this->agent->assignRole('viewer', $this->team);
+
+        $this->agent->syncRoles(['accountant'], $this->team);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue()
             ->and(DB::table('permixion_assignment_throughs')->count())->toBe(0);
+    });
+
+    it('syncRoles takes throughs of its own, applied to every role it leaves', function (): void {
+        $this->agent->syncRoles(['accountant', 'reporter'], $this->team, ['drafter']);
+
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.draft', 'ledger.read'])
+            ->and($this->agent->hasPermissionTo('reports.view', $this->team))->toBeFalse();
+    });
+
+    it('syncRoles throughs narrow a retained capped role further', function (): void {
+        $this->agent->assignRole('accountant', $this->team, ['bookkeeper']);
+
+        $this->agent->syncRoles(['accountant'], $this->team, ['drafter']);
+
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.draft', 'ledger.read']);
     });
 
     it('refuses an unsaved holder as a through', function (): void {

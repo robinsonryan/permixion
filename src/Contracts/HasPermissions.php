@@ -24,8 +24,9 @@ interface HasPermissions
 
     /**
      * @param  array<int, string|Role>  $roles
+     * @param  array<int, Model|Role|string>  $through  holders and/or ceiling roles every role acts through
      */
-    public function syncRoles(array $roles, ?Scope $scope = null): static;
+    public function syncRoles(array $roles, ?Scope $scope = null, array $through = []): static;
 
     // Role checks
     public function hasRole(string|Role $role, ?Scope $scope = null): bool;

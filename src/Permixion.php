@@ -566,13 +566,14 @@ class Permixion
     }
 
     /**
-     * The holder's role assignments readable in $scope, each with its throughs.
+     * The holder's role assignments readable in $scope (or stored in exactly
+     * $scope, for a write), each with its throughs.
      *
      * @return array<int, stdClass> rows of {assignment_id, name, throughs}
      */
-    protected function roleAssignments(Model $holder, ?Scope $scope): array
+    protected function roleAssignments(Model $holder, ?Scope $scope, bool $exact = false): array
     {
-        $assignments = $this->holderTagRows($holder, $this->rolesCategory(), $scope);
+        $assignments = $this->holderTagRows($holder, $this->rolesCategory(), $scope, $exact);
         $throughs = $this->throughRowsFor(array_map(fn (stdClass $row): int|string => $row->assignment_id, $assignments));
 
         foreach ($assignments as $assignment) {
@@ -609,7 +610,7 @@ class Permixion
      *
      * @return array<int, stdClass> rows of {assignment_id, name}
      */
-    protected function holderTagRows(Model $holder, Tag $category, ?Scope $scope): array
+    protected function holderTagRows(Model $holder, Tag $category, ?Scope $scope, bool $exact = false): array
     {
         $pivotTable = config('taxon.tables.taggables', 'taggables');
         $tagTable = config('taxon.tables.tags', 'tags');
@@ -620,7 +621,11 @@ class Permixion
             ->where("{$pivotTable}.taggable_id", $holder->getKey())
             ->where("{$tagTable}.parent_id", $category->getKey());
 
-        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
+        if ($exact) {
+            $this->applyScopeToPivot($query, $pivotTable, $scope);
+        } else {
+            $this->applyReadScopeToPivot($query, $pivotTable, $scope);
+        }
 
         return $query->toBase()
             ->get(["{$pivotTable}.id as assignment_id", "{$tagTable}.name as name"])
@@ -631,7 +636,7 @@ class Permixion
      * Through rows for the given assignments, grouped by assignment id.
      *
      * @param  array<int, int|string>  $assignmentIds
-     * @return array<string, array<int, stdClass>> rows of {assignment_id, holder_type, holder_id, role_name}
+     * @return array<string, array<int, stdClass>> rows of {assignment_id, holder_type, holder_id, role_id, role_name}
      */
     protected function throughRowsFor(array $assignmentIds): array
     {
@@ -650,6 +655,7 @@ class Permixion
                 "{$throughTable}.assignment_id",
                 "{$throughTable}.holder_type",
                 "{$throughTable}.holder_id",
+                "{$throughTable}.role_id",
                 "{$tagTable}.name as role_name",
             ]);
 
@@ -829,7 +835,75 @@ class Permixion
 
         // Resolve every through before writing anything, so a bad one leaves no
         // half-made assignment behind.
+        $this->attachRoleWithThroughRows($user, $roleName, $scope, $this->resolveThroughs($through));
+    }
+
+    /**
+     * Make the roles stored in exactly $scope exactly $roleNames, never widening.
+     *
+     * A role already held stays in place with its throughs. A role it removes
+     * that was capped hands its throughs on to every role it newly assigns, so
+     * swapping a capped holder's role keeps the cap. $through applies to every
+     * role in $roleNames, like assignRole()'s.
+     *
+     * @param  array<int, string>  $roleNames
+     * @param  array<int, Model|Role|string>  $through
+     */
+    public function syncUserRoles(Authorizable $user, array $roleNames, ?Scope $scope = null, array $through = []): void
+    {
+        if (! $user instanceof Model || ! method_exists($user, 'tags')) {
+            return;
+        }
+
         $throughRows = $this->resolveThroughs($through);
+        $wanted = array_values(array_unique($roleNames));
+
+        Taggable::query()->getConnection()->transaction(function () use ($user, $wanted, $scope, $throughRows): void {
+            $held = [];
+            $carried = [];
+
+            foreach ($this->roleAssignments($user, $scope, exact: true) as $assignment) {
+                if (in_array($assignment->name, $wanted, true)) {
+                    $held[] = $assignment->name;
+
+                    continue;
+                }
+
+                foreach ($assignment->throughs as $row) {
+                    $carried[] = [
+                        'holder_type' => $row->holder_type,
+                        'holder_id' => $row->holder_id === null ? null : (string) $row->holder_id,
+                        'role_id' => $row->role_id,
+                    ];
+                }
+
+                $this->detachRoleFromUser($user, $assignment->name, $scope);
+            }
+
+            foreach ($wanted as $roleName) {
+                if (in_array($roleName, $held, true)) {
+                    if ($throughRows !== []) {
+                        $this->attachRoleWithThroughRows($user, $roleName, $scope, $throughRows);
+                    }
+
+                    continue;
+                }
+
+                $this->attachRoleWithThroughRows($user, $roleName, $scope, [...$throughRows, ...$carried]);
+            }
+        });
+
+        $this->flushEffectivePermissions();
+    }
+
+    /**
+     * @param  array<int, array{holder_type: ?string, holder_id: ?string, role_id: int|string|null}>  $throughRows
+     */
+    protected function attachRoleWithThroughRows(Authorizable $user, string $roleName, ?Scope $scope, array $throughRows): void
+    {
+        if (! method_exists($user, 'tags')) {
+            return;
+        }
 
         if (config('permixion.strict')) {
             $tag = $this->findRoleOrFail($roleName)->tag();

@@ -65,28 +65,23 @@ trait HasRoles
     }
 
     /**
-     * Make the roles in this exact scope exactly $roles.
+     * Make the roles in this exact scope exactly $roles — never widening.
      *
-     * A role already held is left in place rather than detached and re-attached,
-     * so the throughs capping it survive — re-attaching would silently lift them.
+     * A role already held is left in place, throughs and all. A capped role it
+     * removes hands its throughs on to the roles it newly assigns, so changing a
+     * capped holder's role keeps the cap. $through caps every role in $roles,
+     * as assignRole()'s does.
      *
      * @param  array<int, string|Role>  $roles
+     * @param  array<int, Model|Role|string>  $through
      */
-    public function syncRoles(array $roles, ?Scope $scope = null): static
+    public function syncRoles(array $roles, ?Scope $scope = null, array $through = []): static
     {
         $scope ??= app('permixion')->resolveCurrentScope();
 
         $wanted = array_map(fn (string|Role $role): string => $role instanceof Role ? $role->name : $role, $roles);
 
-        foreach (app('permixion')->getUserAssignedRoleNames($this, $scope) as $current) {
-            if (! in_array($current, $wanted, true)) {
-                app('permixion')->detachRoleFromUser($this, $current, $scope);
-            }
-        }
-
-        foreach ($wanted as $roleName) {
-            app('permixion')->attachRoleToUser($this, $roleName, $scope);
-        }
+        app('permixion')->syncUserRoles($this, $wanted, $scope, $through);
 
         return $this;
     }

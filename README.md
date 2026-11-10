@@ -233,7 +233,19 @@ like any other role.
 **Writes never widen.** Re-assigning a role with throughs adds them to the
 assignment (narrowing it further); re-assigning with none leaves existing ones in
 place; `syncRoles()` keeps the throughs on roles it retains. To change a cap,
-`removeRole()` and assign again. One holder holds a role once per scope, so two
+`removeRole()` and assign again.
+
+`syncRoles()` never lifts a cap either. A capped role it removes hands its
+throughs on to every role it newly assigns, so changing a capped Agent's role
+keeps it capped by its owner:
+
+```php
+$agent->assignRole('accountant', $company, [$owner]);
+$agent->syncRoles(['bookkeeper'], $company);          // bookkeeper, still through $owner
+$agent->syncRoles(['viewer'], $company, ['drafter']); // throughs of its own, on every role listed
+```
+
+To give the new role a different cap, `removeRole()` the old one first. One holder holds a role once per scope, so two
 *routes* to the same role (a direct membership and a capped firm route) are one
 assignment, capped by every through given — narrower, never wider.
 

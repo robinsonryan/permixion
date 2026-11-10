@@ -57,6 +57,11 @@ before upgrading.
 - `syncRoles()` leaves roles it retains in place instead of detaching and
   re-attaching them (so their throughs survive). The roles held afterwards are
   the same as before.
+- `syncRoles()` never widens: a capped role it removes hands its throughs on to
+  every role it newly assigns, so swapping a capped holder's role keeps the cap
+  (before, the new role was assigned uncapped). It takes an optional
+  `array $through = []` (also on the `HasPermissions` contract) that caps every
+  role listed, as `assignRole()`'s does. The whole sync runs in one transaction.
 
 ### Added
 - `assignRole($roles, ?Scope $scope = null, array $through = [])` — the assignment
