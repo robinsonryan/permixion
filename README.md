@@ -291,9 +291,10 @@ If the model also uses the framework's `Authorizable` *trait*, both define
 `can()`; say `HasRoles::can insteadof Authorizable`, or `$key->can()` bypasses
 the cap.
 
-The hook reads the **ambient** scope, never one passed in the gate arguments. When
-the scope comes from tenancy rather than a route parameter, use the `callback`
-resolver:
+The hook answers in the scope named in the gate arguments —
+`Gate::forUser($agent)->allows('ledger.post', $company)` or `[$company]` — and,
+when none is named, in the **ambient** scope. When the scope comes from tenancy
+rather than a route parameter, use the `callback` resolver:
 
 ```php
 // config/permixion.php

@@ -24,6 +24,13 @@ before upgrading.
   (or unscoped rows when none resolves), so it could **grant on a permission held
   only unscoped or in another team**. Code that relied on that will now be
   refused; pass no argument, or the scope you mean.
+- **The `Gate::before` hook answers in the scope passed in the arguments.**
+  `Gate::forUser($user)->allows('x', $team)` (bare or `[$team]`) is decided in
+  `$team`; with no Scope argument, in the ambient scope as before. Before 0.6.0
+  it always read the ambient scope, so for a model declaring `HasPermissions`
+  a `can('x', $team)` refused in `$team` fell through to the Gate and was
+  **granted on rights held in the current team** — the bare-scope fix alone did
+  not close that. Super admin is judged in the named scope too.
 - **"Super admin" means an uncapped super admin.** The `Gate::before` hook and
   `hasPermissionTo()` used to grant everything to any holder of the super-admin
   role. They now grant everything only when that role is held without a through,

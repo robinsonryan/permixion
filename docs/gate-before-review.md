@@ -12,7 +12,7 @@
 |---|---|
 | `Gate::before` is model-blind | **Not a permixion defect** — spatie behaves identically. Now opt-out via `gate.defer_to_policies`. |
 | `HasRoles::can()` is model-blind | **A genuine permixion defect.** Spatie has no `can()` override. Narrowed unconditionally in 4.0.0. |
-| Scope comes from ambient state | Confirmed, unchanged, now pinned by a test. |
+| Scope comes from ambient state | Confirmed then; **changed in 0.6.0** — a Scope in `$arguments` is now the scope answered (see below). |
 | Super admin grants every ability | Confirmed, deliberate, left alone. |
 | Wildcards broaden the short-circuit | Confirmed; blast radius now bounded by the above. |
 | No test coverage | Closed. 33 → 88 tests. |
@@ -120,10 +120,11 @@ resolved scope.
 
 **Scope comes from ambient state, not from the subject.** `resolveCurrentScope()`
 reads the current request/session scope, never the scope of the thing being
-authorized — and it does not read a `Scope` passed in `$arguments` either. A
-permission granted only in team A is invisible to a check that passes team A as an
-argument while ambient resolution yields nothing. Surprising enough that it now has
-its own test rather than a doc sentence.
+authorized. *Superseded in 0.6.0 for `$arguments`:* the hook now answers in a
+`Scope` passed in the arguments when there is one, because the ambient-only rule
+let `can('x', $teamB)` — refused in team B by `HasRoles::can()` and handed on to
+the Gate — be granted on rights held in the ambient team A. `GateBeforeTest`
+pins the new rule.
 
 **Super admin grants every ability**, including abilities no policy defines and
 abilities belonging to other packages' gates. That is the point of super admin. It

@@ -200,23 +200,73 @@ test('DEFERRING: a Scope argument is not a policy subject', function (): void {
     config()->set('permixion.gate.defer_to_policies', true);
 
     $team = Team::create(['name' => 'Team A']);
-    $this->other->givePermissionTo('posts.publish');
+    $this->other->givePermissionTo('posts.publish', $team);
 
     // A Scope is Permixion's own concern. Deferring must not mistake it for a
     // policy subject and swallow an otherwise valid permission check.
     expect(Gate::forUser($this->other)->allows('posts.publish', [$team]))->toBeTrue();
 });
 
-test('the hook reads AMBIENT scope, never a scope passed in the arguments', function (): void {
-    // Pinned because it is easy to assume otherwise: the hook resolves the
-    // current request/session scope and never consults $arguments for one. A
-    // permission granted only in team A is therefore invisible to a check that
-    // passes team A as an argument while ambient resolution yields nothing.
+/*
+|--------------------------------------------------------------------------
+| The scope the hook answers in (0.6.0)
+|--------------------------------------------------------------------------
+| A Scope named in the arguments is the scope answered; with none, the ambient
+| one. Before 0.6.0 the hook always read the ambient scope, so a check that
+| failed in the named scope — HasRoles::can() hands it on to the Gate — was
+| re-answered, and granted, on rights held in the current team.
+*/
+
+test('the hook answers in a scope passed in the arguments', function (): void {
     config()->set('permixion.teams.enabled', true);
 
     $team = Team::create(['name' => 'Team A']);
     $this->other->givePermissionTo('posts.publish', $team);
 
-    expect(Gate::forUser($this->other)->allows('posts.publish', [$team]))->toBeFalse()
-        ->and($this->other->hasPermissionTo('posts.publish', $team))->toBeTrue();
+    expect(Gate::forUser($this->other)->allows('posts.publish', [$team]))->toBeTrue()
+        ->and(Gate::forUser($this->other)->allows('posts.publish', $team))->toBeTrue()
+        ->and(Gate::forUser($this->other)->allows('posts.publish'))->toBeFalse();
+});
+
+test('a scope in the arguments is never re-answered in the ambient scope', function (): void {
+    config()->set('permixion.teams.enabled', true);
+    config()->set('permixion.teams.resolver', 'callback');
+
+    Permixion::createPermission('ledger.read');
+    Permixion::createPermission('ledger.close');
+    Permixion::createRole('viewer', ['ledger.read']);
+    Permixion::createRole('accountant', ['ledger.read', 'ledger.close']);
+
+    $acme = Team::create(['name' => 'Acme']);
+    $globex = Team::create(['name' => 'Globex']);
+    config()->set('permixion.teams.callback', fn (): Team => $acme);
+
+    $this->other->assignRole('accountant', $acme);
+    $this->other->assignRole('accountant', $globex, ['viewer']);
+
+    expect($this->other->hasPermissionTo('ledger.close', $globex))->toBeFalse()
+        ->and($this->other->can('ledger.close', $globex))->toBeFalse()
+        ->and($this->other->can('ledger.close', [$globex]))->toBeFalse()
+        ->and(Gate::forUser($this->other)->allows('ledger.close', $globex))->toBeFalse()
+        ->and(Gate::forUser($this->other)->allows('ledger.close', [$globex]))->toBeFalse()
+        // The grants beside the refusals: the ambient and the named Acme.
+        ->and($this->other->can('ledger.close'))->toBeTrue()
+        ->and($this->other->can('ledger.close', $acme))->toBeTrue()
+        ->and(Gate::forUser($this->other)->allows('ledger.close'))->toBeTrue()
+        ->and($this->other->can('ledger.read', $globex))->toBeTrue();
+});
+
+test('super admin is judged in the scope passed in the arguments', function (): void {
+    config()->set('permixion.teams.enabled', true);
+    config()->set('permixion.teams.resolver', 'callback');
+
+    $acme = Team::create(['name' => 'Acme']);
+    $globex = Team::create(['name' => 'Globex']);
+    config()->set('permixion.teams.callback', fn (): Team => $acme);
+
+    $this->other->assignRole('super-admin', $acme);
+
+    expect(Gate::forUser($this->other)->allows('anything.at.all'))->toBeTrue()
+        ->and(Gate::forUser($this->other)->allows('anything.at.all', [$globex]))->toBeFalse()
+        ->and($this->other->can('anything.at.all', $globex))->toBeFalse();
 });

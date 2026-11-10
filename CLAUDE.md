@@ -50,7 +50,11 @@ and runs in this order:
    short-circuit on in every consumer that only uses the trait. Two fixtures
    (`tests/Fixtures/User.php` without the contract, `GateUser.php` with it) pin
    both sides.
-2. Super admin — if the user's effective permissions in the ambient scope are
+   The scope answered is the one named in `$arguments` (a bare `Scope` or one
+   first in the array — `Permixion::scopeFromArguments()`), else the ambient one
+   (since 0.6.0; before, always ambient, which re-granted a scoped `can()` that
+   `HasRoles::can()` had refused). Pinned in `GateBeforeTest`.
+2. Super admin — if the user's effective permissions in that scope are
    *unlimited* (`super_admin.enabled`, `super_admin.role` held with no through, by
    an active holder, under no `withCeiling()`), return `true`. God-mode,
    deliberately **not** narrowed by `defer_to_policies`.
@@ -178,8 +182,8 @@ Other concepts worth knowing:
 - **Scope** (`RobinsonRyan\Taxon\Contracts\Scope`) — resolved from route /
   session / callback per `permixion.teams.resolver`, and **only** when
   `teams.enabled` is true. `resolveCurrentScope()` reads ambient request state; it
-  never reads the scope of the thing being authorized, and it does not read a
-  `Scope` passed in gate `$arguments`.
+  never reads the scope of the thing being authorized. The `Gate::before` hook
+  and `can()` prefer a `Scope` passed in the arguments and fall back to it.
 - **`teams.global_fallback`** — off by default. On, a scoped **read** also matches
   unscoped rows (spatie teams semantics). Writes always target the exact scope.
 - **Wildcards** — `wildcards.enabled` (default on): a stored `posts.*` matches any

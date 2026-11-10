@@ -144,7 +144,12 @@ class PermixionServiceProvider extends ServiceProvider
                 return null;
             }
 
-            $scope = app(Permixion::class)->resolveCurrentScope();
+            // A scope named in the arguments is the scope answered — never the
+            // ambient one. HasRoles::can() hands a check it refused in the named
+            // scope on to the Gate; answering that in the current team would
+            // grant there on rights held here.
+            $scope = app(Permixion::class)->scopeFromArguments($arguments)
+                ?? app(Permixion::class)->resolveCurrentScope();
 
             // Super admin is deliberate god-mode and stays unconditional — it is
             // not narrowed by defer_to_policies. "Super admin" means an UNCAPPED
