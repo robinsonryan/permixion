@@ -78,7 +78,7 @@ trait HasRoles
 
         $wanted = array_map(fn (string|Role $role): string => $role instanceof Role ? $role->name : $role, $roles);
 
-        foreach (app('permixion')->getUserRoleNames($this, $scope) as $current) {
+        foreach (app('permixion')->getUserAssignedRoleNames($this, $scope) as $current) {
             if (! in_array($current, $wanted, true)) {
                 app('permixion')->detachRoleFromUser($this, $current, $scope);
             }
@@ -171,26 +171,46 @@ trait HasRoles
     */
 
     /**
+     * The roles in force in $scope — assigned, and surviving their throughs and
+     * ceilings whole. See getAssignedRoleNames() for what is merely stored.
+     *
      * @return Collection<int, Role>
      */
     public function getRoles(?Scope $scope = null): Collection
     {
         $scope ??= app('permixion')->resolveCurrentScope();
-        $categoryId = app('permixion')->rolesCategory()->id;
-        $pivotTable = config('taxon.tables.taggables', 'taggables');
+        $inForce = $this->getRoleNames($scope);
 
-        $query = $this->tags()->where('parent_id', $categoryId);
-        app('permixion')->applyReadScopeToPivot($query, $pivotTable, $scope);
-
-        return $query->get()->map(fn ($tag): Role => new Role($tag));
+        return app('permixion')->rolesCategory()
+            ->children()
+            ->whereIn('name', $inForce)
+            ->get()
+            ->map(fn ($tag): Role => new Role($tag))
+            ->values();
     }
 
     /**
+     * The names of the roles in force in $scope.
+     *
      * @return array<int, string>
      */
     public function getRoleNames(?Scope $scope = null): array
     {
         return app('permixion')->getUserRoleNames($this, $scope);
+    }
+
+    /**
+     * The names of the roles stored against this holder in $scope, whether in
+     * force or not — for showing or reconciling assignments. Never authorize on
+     * it: a capped or inactive holder's roles are listed here too.
+     *
+     * @return array<int, string>
+     */
+    public function getAssignedRoleNames(?Scope $scope = null): array
+    {
+        $scope ??= app('permixion')->resolveCurrentScope();
+
+        return app('permixion')->getUserAssignedRoleNames($this, $scope);
     }
 
     /*
@@ -394,19 +414,21 @@ trait HasRoles
     }
 
     /**
+     * Every permission this holder may use in $scope — its effective
+     * permissions, as Permission objects. An uncapped super admin lists every
+     * permission that exists.
+     *
      * @return Collection<array-key, Permission>
      */
     public function getAllPermissions(?Scope $scope = null): Collection
     {
-        $scope ??= app('permixion')->resolveCurrentScope();
+        $names = $this->effectivePermissions($scope)->all();
 
-        $rolePermissions = collect();
-        foreach ($this->getRoles($scope) as $role) {
-            $rolePermissions = $rolePermissions->merge($role->getPermissions());
-        }
-
-        $directPermissions = $this->getDirectPermissions($scope);
-
-        return $rolePermissions->merge($directPermissions)->unique('name');
+        return app('permixion')->permissionsCategory()
+            ->children()
+            ->whereIn('name', $names)
+            ->get()
+            ->map(fn ($tag): Permission => new Permission($tag))
+            ->values();
     }
 }

@@ -204,7 +204,20 @@ Gate::forUser($agent)->allows('ledger.post');
 ```
 
 `hasPermissionTo()`, `can()`, the `Gate::before` hook, the `permission`
-middleware and Blade directives all decide from effective permissions.
+middleware and the `@permission` directives decide from effective permissions,
+and `getAllPermissions()` lists them.
+
+**Role questions ask whether a role is in force**, not merely assigned:
+`hasRole()` and its family (`hasAnyRole`, `hasAllRoles`, `hasExactRoles`,
+`hasRoleAnywhere`, `getRoles`, `getRoleNames`), the `role` and
+`role_or_permission` middleware and the `@role` directives. A role is in force
+when the holder is active and the role survives its throughs and any
+`withCeiling()` whole — every permission of the role is still granted. A role
+with no permissions is in force only when nothing caps it; the super-admin role
+only when the holder is an uncapped super admin. An Agent holding `accountant`
+through a viewer owner does not pass `hasRole('accountant')`.
+`getAssignedRoleNames()` lists what is stored, in force or not — for showing
+assignments, never for authorizing.
 
 **Everything fails closed.** Each of these caps to nothing rather than granting:
 

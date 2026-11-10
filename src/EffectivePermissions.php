@@ -68,6 +68,29 @@ final readonly class EffectivePermissions
         return $this->patterns;
     }
 
+    /**
+     * Whether this set grants everything $other grants. Only an unlimited set
+     * includes an unlimited one.
+     */
+    public function includes(self $other): bool
+    {
+        if ($this->unlimited) {
+            return true;
+        }
+
+        if ($other->unlimited) {
+            return false;
+        }
+
+        foreach ($other->patterns as $pattern) {
+            if (! $this->covers($this->patterns, $pattern)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public function union(self $other): self
     {
         if ($this->unlimited || $other->unlimited) {

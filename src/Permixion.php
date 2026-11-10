@@ -395,13 +395,82 @@ class Permixion
             $effective = $memo[$key];
         }
 
+        return $effective->intersect($this->ceilingSet($holder));
+    }
+
+    /**
+     * The roles IN FORCE for the holder in $scope — not merely assigned.
+     *
+     * A role is in force when the holder is active and the role survives its
+     * own assignment's throughs, and the holder's withCeiling() ceilings, whole:
+     * every permission of the role is still granted. A role with no permissions
+     * is in force only when nothing caps it, so a cycle, a deleted or inactive
+     * through or a too-deep chain can never leave it standing. The super-admin
+     * role is in force only when the holder's effective permissions are
+     * unlimited. Every role question (hasRole and its family, the role
+     * middleware, the @role directives) asks this.
+     *
+     * @return array<int, string>
+     */
+    public function roleNamesInForce(Model $holder, ?Scope $scope = null): array
+    {
+        if (! $this->isActiveHolder($holder) || $holder->getKey() === null) {
+            return [];
+        }
+
+        $ceiling = $this->ceilingSet($holder);
+        $path = [$this->holderIdentity($holder)];
+        $names = [];
+
+        foreach ($this->roleAssignments($holder, $scope) as $assignment) {
+            $name = $assignment->name;
+
+            if (in_array($name, $names, true)) {
+                continue;
+            }
+
+            if ($this->isSuperAdminRole($name)) {
+                if ($this->effectivePermissionsFor($holder, $scope)->isUnlimited()) {
+                    $names[] = $name;
+                }
+
+                continue;
+            }
+
+            $cap = $ceiling;
+
+            foreach ($assignment->throughs as $through) {
+                $cap = $cap->intersect($this->throughPermissionSet($through, $scope, $path, 0));
+            }
+
+            $role = $this->rolePermissionSet($name);
+
+            if ($role->isEmpty() ? $cap->isUnlimited() : $cap->includes($role)) {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
+    }
+
+    public function roleInForce(Model $holder, string $roleName, ?Scope $scope = null): bool
+    {
+        return in_array($roleName, $this->roleNamesInForce($holder, $scope), true);
+    }
+
+    /**
+     * Every withCeiling() ceiling on the holder, intersected (unlimited if none).
+     */
+    protected function ceilingSet(Model $holder): EffectivePermissions
+    {
+        $set = EffectivePermissions::unlimited();
         $ceilings = method_exists($holder, 'permixionCeilings') ? $holder->permixionCeilings() : [];
 
         foreach ($ceilings as $ceiling) {
-            $effective = $effective->intersect($this->rolePermissionSet($ceiling));
+            $set = $set->intersect($this->rolePermissionSet($ceiling));
         }
 
-        return $effective;
+        return $set;
     }
 
     /**
@@ -434,15 +503,12 @@ class Permixion
 
         $path[] = $identity;
 
-        $assignments = $this->holderTagRows($holder, $this->rolesCategory(), $scope);
-        $throughs = $this->throughRowsFor(array_map(fn (stdClass $row): int|string => $row->assignment_id, $assignments));
-
         $effective = EffectivePermissions::none();
 
-        foreach ($assignments as $assignment) {
+        foreach ($this->roleAssignments($holder, $scope) as $assignment) {
             $granted = $this->rolePermissionSet($assignment->name);
 
-            foreach ($throughs[(string) $assignment->assignment_id] ?? [] as $through) {
+            foreach ($assignment->throughs as $through) {
                 if ($granted->isEmpty()) {
                     break;
                 }
@@ -487,11 +553,33 @@ class Permixion
 
     protected function rolePermissionSet(string $roleName): EffectivePermissions
     {
-        if (config('permixion.super_admin.enabled') && $roleName === config('permixion.super_admin.role')) {
+        if ($this->isSuperAdminRole($roleName)) {
             return EffectivePermissions::unlimited();
         }
 
         return EffectivePermissions::of($this->getPermissionsForRole($roleName));
+    }
+
+    protected function isSuperAdminRole(string $roleName): bool
+    {
+        return config('permixion.super_admin.enabled') && $roleName === config('permixion.super_admin.role');
+    }
+
+    /**
+     * The holder's role assignments readable in $scope, each with its throughs.
+     *
+     * @return array<int, stdClass> rows of {assignment_id, name, throughs}
+     */
+    protected function roleAssignments(Model $holder, ?Scope $scope): array
+    {
+        $assignments = $this->holderTagRows($holder, $this->rolesCategory(), $scope);
+        $throughs = $this->throughRowsFor(array_map(fn (stdClass $row): int|string => $row->assignment_id, $assignments));
+
+        foreach ($assignments as $assignment) {
+            $assignment->throughs = $throughs[(string) $assignment->assignment_id] ?? [];
+        }
+
+        return $assignments;
     }
 
     protected function isActiveHolder(Model $holder): bool
@@ -628,9 +716,26 @@ class Permixion
     */
 
     /**
+     * The roles in force for the user in $scope (see roleNamesInForce()).
+     *
      * @return array<int, string>
      */
     public function getUserRoleNames(Authorizable $user, ?Scope $scope = null): array
+    {
+        if (! $user instanceof Model || ! method_exists($user, 'tags')) {
+            return [];
+        }
+
+        return $this->roleNamesInForce($user, $scope);
+    }
+
+    /**
+     * The roles stored against the user in $scope, in force or not — what
+     * syncRoles() reconciles against. Never use it to authorize.
+     *
+     * @return array<int, string>
+     */
+    public function getUserAssignedRoleNames(Authorizable $user, ?Scope $scope = null): array
     {
         if (! method_exists($user, 'tags')) {
             return [];
@@ -645,42 +750,71 @@ class Permixion
         return $query->pluck('name')->all();
     }
 
+    /**
+     * Whether the role is in force for the user in $scope: assigned, the holder
+     * active, and the role surviving its throughs and ceilings whole.
+     */
     public function userHasRole(Authorizable $user, string $roleName, ?Scope $scope = null): bool
     {
-        if (! method_exists($user, 'tags')) {
+        if (! $user instanceof Model || ! method_exists($user, 'tags')) {
             return false;
         }
 
-        $categoryId = $this->rolesCategory()->id;
-        $pivotTable = config('taxon.tables.taggables', 'taggables');
-
-        $query = $user->tags()
-            ->where('parent_id', $categoryId)
-            ->where('name', $roleName);
-
-        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
-
-        return $query->exists();
+        return $this->roleInForce($user, $roleName, $scope);
     }
 
     /**
-     * Whether the user holds the role under ANY scope (including unscoped).
+     * Whether the role is in force for the user under ANY scope (including
+     * unscoped), each assignment judged in its own scope.
      *
      * Useful for "is this user an admin at all?" checks where the current
      * scope context is irrelevant.
      */
     public function userHasRoleInAnyScope(Authorizable $user, string $roleName): bool
     {
-        if (! method_exists($user, 'tags')) {
+        if (! $user instanceof Model || ! method_exists($user, 'tags')) {
             return false;
         }
 
-        $categoryId = $this->rolesCategory()->id;
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
 
-        return $user->tags()
-            ->where('parent_id', $categoryId)
+        $scopes = $user->tags()
+            ->where('parent_id', $this->rolesCategory()->id)
             ->where('name', $roleName)
-            ->exists();
+            ->get(["{$pivotTable}.scope_type", "{$pivotTable}.scope_id"]);
+
+        foreach ($scopes as $row) {
+            if ($this->roleInForce($user, $roleName, $this->storedScope($row->scope_type, $row->scope_id))) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The Scope a stored pivot row names: GlobalScope for an unscoped row.
+     */
+    protected function storedScope(?string $type, int|string|null $id): Scope
+    {
+        if ($type === null || $id === null) {
+            return GlobalScope::instance();
+        }
+
+        return new class($type, $id) implements Scope
+        {
+            public function __construct(private readonly string $type, private readonly int|string $id) {}
+
+            public function getScopeType(): string
+            {
+                return $this->type;
+            }
+
+            public function getScopeId(): string|int
+            {
+                return $this->id;
+            }
+        };
     }
 
     /**

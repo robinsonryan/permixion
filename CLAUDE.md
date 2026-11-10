@@ -119,7 +119,7 @@ sharing it so they cannot drift apart.
 |---|---|
 | `Permixion` (`src/Permixion.php`) | The engine. Container singleton, aliased `permixion`; every other surface calls into it via `app('permixion')`. |
 | `Facades\Permixion` | Static face of the above — `createRole`, `findRole(OrFail)`, `createPermission`, `getAllRoles`, `deleteRole`, `clearCache`, … |
-| `Traits\HasRoles` | Mixed into the consumer's user model. `assignRole` / `removeRole` / `syncRoles`, `hasRole` / `hasAnyRole` / `hasAllRoles` / `hasExactRoles` / `hasRoleAnywhere`, `hasPermissionTo` / `hasAnyPermission` / `hasAllPermissions`, `givePermissionTo` / `revokePermissionTo`, `getRoles` / `getRoleNames` / `getDirectPermissions` / `getAllPermissions`, and the `can()` override. |
+| `Traits\HasRoles` | Mixed into the consumer's user model. `assignRole` / `removeRole` / `syncRoles`, `hasRole` / `hasAnyRole` / `hasAllRoles` / `hasExactRoles` / `hasRoleAnywhere`, `hasPermissionTo` / `hasAnyPermission` / `hasAllPermissions`, `givePermissionTo` / `revokePermissionTo`, `getRoles` / `getRoleNames` / `getAssignedRoleNames` / `getDirectPermissions` / `getAllPermissions`, and the `can()` override. Role questions answer *in force* (survives its throughs whole), never merely assigned; `getAssignedRoleNames` is the raw stored list. |
 | `Contracts\HasPermissions` | Opt-in marker + interface for the `Gate::before` hook. Mirrors the trait's signatures. |
 | `Models\Role` / `Models\Permission` | **Plain PHP wrappers around a Taxon `Tag`** — see gotchas. |
 | `GlobalScope` | Singleton sentinel meaning "the unscoped assignment", as opposed to `null` = "resolve ambient scope". |

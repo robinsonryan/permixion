@@ -33,6 +33,20 @@ before upgrading.
 - `Permixion::userHasPermission()` now answers from effective permissions, so it
   honours throughs, ceilings and inactive holders — and now also grants for an
   uncapped super admin, as `hasPermissionTo()` always did.
+- **Role questions answer whether a role is in force, not merely assigned.**
+  `hasRole()`, `hasAnyRole()`, `hasAllRoles()`, `hasExactRoles()`,
+  `hasRoleAnywhere()`, `getRoles()`, `getRoleNames()`, the `role` and
+  `role_or_permission` middleware and the `@role` / `@hasrole` / `@hasanyrole` /
+  `@hasallroles` / `@unlessrole` directives now count a role only when the holder
+  is active and the role survives its throughs and `withCeiling()` ceilings
+  whole (every permission of the role still granted; a role with no permissions
+  only when nothing caps it; super admin only when uncapped). Engine
+  `userHasRole()`, `userHasRoleInAnyScope()` and `getUserRoleNames()` likewise.
+  Before, a revoked or capped holder passed every role check. Nothing changes
+  for holders without throughs, ceilings or `CanBeInactive`.
+- **`getAllPermissions()` lists effective permissions** — what the holder may
+  actually use in the scope — instead of every permission of every assigned
+  role.
 - `syncRoles()` leaves roles it retains in place instead of detaching and
   re-attaching them (so their throughs survive). The roles held afterwards are
   the same as before.
@@ -53,6 +67,10 @@ before upgrading.
 - Config `permixion.through.max_depth` (default 5) and
   `permixion.tables.assignment_throughs`.
 - `Permixion::scopeFromArguments()` and `Permixion::flushEffectivePermissions()`.
+- `getAssignedRoleNames(?Scope $scope = null)` on `HasRoles` (engine
+  `getUserAssignedRoleNames()`): the roles stored, in force or not. For display
+  and reconciliation, never for authorization. Engine `roleNamesInForce()` /
+  `roleInForce()` answer the role questions.
 - Effective permissions are memoised per request (a `scoped` binding), never
   across requests; every permixion write clears the memo.
 
