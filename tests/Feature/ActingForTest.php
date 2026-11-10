@@ -782,3 +782,68 @@ describe('atomic writes and a consistent read', function (): void {
         expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
     });
 });
+
+describe('the memo in a long-lived process', function (): void {
+    /*
+    | Outside a request or a queued job nothing resets the scoped memo, so a
+    | change another process makes is not seen until the unit of work flushes it
+    | — or until a result outlives permixion.memo.ttl seconds.
+    */
+
+    beforeEach(function (): void {
+        $this->agent->assignRole('accountant', $this->team);
+
+        // Another process removes the role, behind this one's back.
+        $this->removeBehindTheBack = function (): void {
+            DB::table('taggables')->where('taggable_id', $this->agent->getKey())->delete();
+        };
+    });
+
+    it('by default keeps a result for the unit of work, until flushed', function (): void {
+        expect(config('permixion.memo.ttl'))->toBeNull()
+            ->and($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        ($this->removeBehindTheBack)();
+        $this->travel(1)->hours();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        Permixion::flushEffectivePermissions();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+    });
+
+    it('forgetting the scoped instances starts the next unit of work empty', function (): void {
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        ($this->removeBehindTheBack)();
+        app()->forgetScopedInstances();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+    });
+
+    it('with a ttl, recomputes a result older than it', function (): void {
+        config()->set('permixion.memo.ttl', 30);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        ($this->removeBehindTheBack)();
+        $this->travel(29)->seconds();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        $this->travel(2)->seconds();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+    });
+
+    it('with a ttl of 0, never memoises', function (): void {
+        config()->set('permixion.memo.ttl', 0);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        ($this->removeBehindTheBack)();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+    });
+});

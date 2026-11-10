@@ -90,6 +90,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Effective-permissions memo
+    |--------------------------------------------------------------------------
+    |
+    | Effective permissions are memoised per holder and scope in a `scoped`
+    | binding, which the framework resets for every HTTP request, Octane request
+    | and queued job — and nowhere else. A daemon, a stdio tool server, a
+    | scheduler loop or a long artisan command keeps one memo for its whole life
+    | and will not see a role removed or a holder revoked by another process.
+    | In such a process, call Permixion::flushEffectivePermissions() (or
+    | app()->forgetScopedInstances()) at the start of each unit of work, and/or
+    | bound the memo here.
+    |
+    | ttl: seconds a memoised result may be reused. null = for the life of the
+    | scoped binding (the default); 0 = never memoise.
+    |
+    */
+    'memo' => [
+        'ttl' => null,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Tables
     |--------------------------------------------------------------------------
     |

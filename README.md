@@ -342,6 +342,22 @@ change something mid-request that permixion cannot see — revoke a through hold
 or write a taggable row directly — call `Permixion::flushEffectivePermissions()`
 before checking again in the same request.
 
+**Long-lived processes.** The framework resets the memo for each HTTP request,
+Octane request and queued job, and nowhere else. A daemon, a stdio tool server, a
+scheduler loop or a long artisan command keeps one memo for its life and will not
+see a role removed or a key revoked by another process. Flush it at the start of
+each unit of work — a message, a tool call, a tenant in a loop:
+
+```php
+foreach ($tenants as $tenant) {
+    Permixion::flushEffectivePermissions();   // or app()->forgetScopedInstances()
+    // ... checks for this tenant
+}
+```
+
+Or bound how long a result may be reused with `permixion.memo.ttl` (seconds;
+`null`, the default, keeps it for the unit of work; `0` never memoises).
+
 ### Blade Directives
 
 ```blade

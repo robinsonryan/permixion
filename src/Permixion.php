@@ -387,13 +387,24 @@ class Permixion
 
         $memo = $this->effectiveMemo();
         $key = $this->memoKey($holder, $scope);
+        $ttl = config('permixion.memo.ttl');
+        $ttl = $ttl === null ? null : (int) $ttl;
 
-        if ($key === null) {
+        if ($key === null || $ttl === 0) {
             $effective = $this->computeEffective($holder, $scope, [], 0);
         } else {
-            $memo[$key] ??= $this->computeEffective($holder, $scope, [], 0);
+            $now = now()->getTimestamp();
+            $entry = $memo[$key] ?? null;
 
-            $effective = $memo[$key];
+            if ($entry === null || ($entry['expires'] !== null && $entry['expires'] <= $now)) {
+                $entry = [
+                    'result' => $this->computeEffective($holder, $scope, [], 0),
+                    'expires' => $ttl === null ? null : $now + $ttl,
+                ];
+                $memo[$key] = $entry;
+            }
+
+            $effective = $entry['result'];
         }
 
         return $effective->intersect($this->ceilingSet($holder));
@@ -681,11 +692,12 @@ class Permixion
     }
 
     /**
-     * The request-scoped memo of root results. Bound `scoped`, so Octane and
-     * queue workers start every request and job with an empty one; nothing
-     * outlives the request that a role change could make stale.
+     * The memo of root results. Bound `scoped`, so Octane and queue workers
+     * start every request and job with an empty one. Any other long-lived
+     * process must flush it per unit of work (flushEffectivePermissions() or
+     * app()->forgetScopedInstances()), or bound it with permixion.memo.ttl.
      *
-     * @return ArrayObject<string, EffectivePermissions>
+     * @return ArrayObject<string, array{result: EffectivePermissions, expires: int|null}>
      */
     protected function effectiveMemo(): ArrayObject
     {

@@ -97,7 +97,11 @@ before upgrading.
   and reconciliation, never for authorization. Engine `roleNamesInForce()` /
   `roleInForce()` answer the role questions.
 - Effective permissions are memoised per request (a `scoped` binding), never
-  across requests; every permixion write clears the memo.
+  across requests; every permixion write clears the memo. Outside requests and
+  queued jobs nothing resets it: long-lived processes should call
+  `Permixion::flushEffectivePermissions()` per unit of work (README *Caching*),
+  or set the new `permixion.memo.ttl` (seconds; `null` = for the unit of work,
+  the default; `0` = never memoise).
 
 ### Fixed
 - Creating a role or permission inside a database transaction on PostgreSQL no
