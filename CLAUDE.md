@@ -150,10 +150,15 @@ configurable via `taxon.tables.*`). Permixion owns one migration,
 - **Acting for** — an assignment's throughs are rows in
   `permixion_assignment_throughs` keyed by that `taggables.id`: a holder morph or
   a ceiling role id. No foreign keys (Taxon's published migrations can sort after
-  it); `deleteUserTagPivot()` deletes them with the assignment. Every check goes
-  through `Permixion::effectivePermissionsFor()` — the union over assignments of
-  role ∩ every through, recursive, cycle-safe, depth-limited, failing closed. The
-  decisions and the ledger are in `docs/spec/acting-for.md`.
+  it); the assignment and its throughs are written in one transaction and read
+  in one statement (`roleAssignments()`) — a missing through row reads as
+  uncapped. Every permission check goes through
+  `Permixion::effectivePermissionsFor()` — the union over assignments of role ∩
+  every through, recursive, cycle-safe, depth-limited, failing closed — and every
+  role question through `roleNamesInForce()` (a role counts only if it survives
+  its throughs whole). `assignRole` refuses (`AssignmentRouteConflict`) to merge a
+  capped and an uncapped route to one role. The decisions and the ledger are in
+  `docs/spec/acting-for.md`.
 
 **Identity is `Tag.name`, verbatim — never the slug.** The whole trait
 deliberately bypasses Taxon's `addTag`/`hasTagIn` helpers because those run input
@@ -194,7 +199,9 @@ Other concepts worth knowing:
 - **Cache** — role→permission name lists only, keyed `permixion.role_permissions.<role>`.
   Every mutating path calls `clearCache()`; a new one must too. Effective
   permissions are memoised per request in the `scoped` `permixion.effective-memo`
-  binding; `clearCache()` and every assignment write flush it.
+  binding; `clearCache()` and every assignment write flush it. Only requests and
+  queued jobs reset it — long-lived processes flush per unit of work, or set
+  `permixion.memo.ttl`.
 
 ## Gotchas a newcomer will otherwise hit
 
