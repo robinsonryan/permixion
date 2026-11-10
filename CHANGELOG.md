@@ -106,6 +106,12 @@ before upgrading.
   or set the new `permixion.memo.ttl` (seconds; `null` = for the unit of work,
   the default; `0` = never memoise).
 
+### Removed
+- Engine methods `Permixion::detachAllUserRoles()` and
+  `Permixion::userHasDirectPermission()`. Neither had a caller once `syncRoles()`
+  and the permission checks moved onto effective permissions; neither was on the
+  facade. Use `syncRoles([], $scope)` and `getDirectPermissions($scope)`.
+
 ### Fixed
 - Creating a role or permission inside a database transaction on PostgreSQL no
   longer fails with "current transaction is aborted" when the slug collides: the

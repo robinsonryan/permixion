@@ -1053,41 +1053,6 @@ class Permixion
         $this->deleteUserTagPivot($user, $tag->id, $scope);
     }
 
-    public function detachAllUserRoles(Authorizable $user, ?Scope $scope = null): void
-    {
-        if (! method_exists($user, 'tags')) {
-            return;
-        }
-
-        $categoryId = $this->rolesCategory()->id;
-        $pivotTable = config('taxon.tables.taggables', 'taggables');
-
-        $query = $user->tags()->where('parent_id', $categoryId);
-        $this->applyScopeToPivot($query, $pivotTable, $scope);
-
-        foreach ($query->get() as $tag) {
-            $this->deleteUserTagPivot($user, $tag->id, $scope);
-        }
-    }
-
-    public function userHasDirectPermission(Authorizable $user, string $permissionName, ?Scope $scope = null): bool
-    {
-        if (! method_exists($user, 'tags')) {
-            return false;
-        }
-
-        $categoryId = $this->permissionsCategory()->id;
-        $pivotTable = config('taxon.tables.taggables', 'taggables');
-
-        $query = $user->tags()
-            ->where('parent_id', $categoryId)
-            ->where('name', $permissionName);
-
-        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
-
-        return $query->exists();
-    }
-
     /**
      * @return array<int, string>
      */
