@@ -27,6 +27,15 @@ Publish the configuration:
 php artisan vendor:publish --tag=permixion-config
 ```
 
+Run the migrations. Roles and permissions live in Taxon's tables; permixion adds
+one table of its own, `permixion_assignment_throughs`, for [acting for](#acting-for).
+It loads automatically; publish it (`--tag=permixion-migrations`) only if you want
+to own it.
+
+```bash
+php artisan migrate
+```
+
 ## Quick Start
 
 ```php
@@ -101,6 +110,9 @@ if ($user->hasPermissionTo('posts.delete')) {
 if ($user->can('posts.delete')) {
     //
 }
+
+// Scoped: a bare scope and [$scope] mean the same thing
+$user->can('posts.delete', $team);
 ```
 
 ### Team/Context Scoping
@@ -158,6 +170,193 @@ $user->hasRole('owner', $team);   // true with global_fallback, false without
 
 Writes (`assignRole`/`removeRole`/`syncRoles`) always target the exact scope
 they are given — `global_fallback` only widens reads.
+
+### Acting for
+
+Some holders act **for** someone else and must hold no more than what they act
+for: an AI Agent acting for the person who owns it, an API key acting for its
+app, a firm's staffer acting under what the client granted the firm, a key
+restricted to drafting. Give the assignment a list of **throughs**:
+
+```php
+// The agent is an accountant on $company — capped by what $owner may do there.
+$agent->assignRole('accountant', $company, [$owner]);
+
+// A ceiling role: never more than 'drafter' grants, whatever 'accountant' holds.
+$key->assignRole('accountant', $company, [$app, 'drafter']);
+```
+
+A through is a **holder** (any model using `HasRoles`; it caps the assignment to
+what that holder may do in the same scope, recursively) or a **role** (a fixed
+ceiling: a role name or `Role`). Several throughs all apply.
+
+What a holder may do in a scope — its **effective permissions** — is the union,
+over its assignments there, of *the role's permissions ∩ every through's
+effective permissions*, plus its direct permissions. "The lesser of two roles"
+is therefore the permissions both have in common: for nested roles it is the
+lower role, and it works just as well for roles that are not nested.
+
+```php
+$agent->effectivePermissions($company);   // Collection of permission names
+$agent->hasPermissionTo('ledger.post', $company);
+$agent->can('ledger.post', $company);
+Gate::forUser($agent)->allows('ledger.post');
+```
+
+`hasPermissionTo()`, `can()`, the `Gate::before` hook, the `permission`
+middleware and the `@permission` directives decide from effective permissions,
+and `getAllPermissions()` lists them.
+
+**Role questions ask whether a role is in force**, not merely assigned:
+`hasRole()` and its family (`hasAnyRole`, `hasAllRoles`, `hasExactRoles`,
+`hasRoleAnywhere`, `getRoles`, `getRoleNames`), the `role` and
+`role_or_permission` middleware and the `@role` directives. A role is in force
+when the holder is active and the role survives its throughs and any
+`withCeiling()` whole — every permission of the role is still granted. A role
+with no permissions is in force only when nothing caps it; the super-admin role
+only when the holder is an uncapped super admin. An Agent holding `accountant`
+through a viewer owner does not pass `hasRole('accountant')`.
+`getAssignedRoleNames()` lists what is stored, in force or not — for showing
+assignments, never for authorizing.
+
+**Everything fails closed.** Each of these caps to nothing rather than granting:
+
+- a cycle (a holder already on the chain contributes nothing);
+- a chain deeper than `permixion.through.max_depth` (default 5);
+- a through holder or ceiling role that has been deleted;
+- an **inactive** holder — see below.
+
+**Super admin.** An uncapped super-admin through holder imposes no cap. A
+super-admin *role held through a capped holder* is not god-mode: it is capped
+like any other role.
+
+**Writes never widen.** Re-assigning a role with throughs adds them to the
+assignment (narrowing it further); re-assigning with none leaves existing ones in
+place; `syncRoles()` keeps the throughs on roles it retains. To change a cap,
+`removeRole()` and assign again.
+
+`syncRoles()` never lifts a cap either. A capped role it removes hands its
+throughs on to every role it newly assigns, so changing a capped Agent's role
+keeps it capped by its owner:
+
+```php
+$agent->assignRole('accountant', $company, [$owner]);
+$agent->syncRoles(['bookkeeper'], $company);          // bookkeeper, still through $owner
+$agent->syncRoles(['viewer'], $company, ['drafter']); // throughs of its own, on every role listed
+```
+
+To give the new role a different cap, `removeRole()` the old one first.
+
+**Two routes to one role are refused, not merged.** A holder holds a role once per
+scope. So when a role is held uncapped (a direct membership), assigning it again
+through a holder or ceiling (a firm route) throws `AssignmentRouteConflict` —
+merging would silently cap the membership, and removing the firm route would
+remove both. The reverse (re-assigning a capped role with no through) throws too.
+Hold each route under its own role name, with the same permissions:
+
+```php
+Permixion::createRole('firm-bookkeeper', Permixion::getPermissionsForRole('bookkeeper'));
+
+$person->assignRole('bookkeeper', $company);                    // membership
+$person->assignRole('firm-bookkeeper', $company, [$firmGrant]); // firm route, capped by the grant
+$person->removeRole('firm-bookkeeper', $company);               // leaving the firm keeps the membership
+```
+
+Two capped routes to one role (assigning with throughs again) still add up: the
+assignment is capped by every through given — narrower, never wider.
+
+#### Inactive holders
+
+A revoked key or Agent implements `CanBeInactive`. While inactive it has no
+permissions at all (super admin included), and anything acting through it is
+capped to nothing. Its assignments stay in place, so re-activating restores them.
+
+```php
+use RobinsonRyan\Permixion\Contracts\CanBeInactive;
+
+class AgentKey extends Model implements CanBeInactive /* … */
+{
+    public function isActiveHolder(): bool
+    {
+        return $this->revoked_at === null;
+    }
+}
+```
+
+#### A per-request ceiling — `withCeiling()`
+
+When a request asks for less than the holder has — an app passing "act as a
+viewer" for the person behind it — narrow a copy for this request only:
+
+```php
+$acting = $key->withCeiling('viewer');   // $key itself is untouched
+
+Gate::forUser($acting)->allows('ledger.post');   // false
+```
+
+Ceilings stack (they intersect) and never widen. They live on that instance only:
+nothing is persisted, and a model re-fetched from the database — a queued job's,
+for one — has none.
+
+#### Holders that are not users
+
+Any Eloquent model can hold roles: use `HasRoles` and Taxon's `HasTags`, and
+satisfy the framework's `Illuminate\Contracts\Auth\Access\Authorizable`
+contract (the `can()` that `HasRoles` supplies is enough). Declare
+`HasPermissions` if the `Gate::before` hook should answer for it. Check it with
+`Gate::forUser()`:
+
+```php
+class Agent extends Model implements Authorizable, HasPermissions, CanBeInactive
+{
+    use HasRoles, HasTags;
+}
+
+Gate::forUser($agent)->allows('ledger.post');
+```
+
+If the model also uses the framework's `Authorizable` *trait*, both define
+`can()`; say `HasRoles::can insteadof Authorizable`, or `$key->can()` bypasses
+the cap.
+
+The hook answers in the scope named in the gate arguments —
+`Gate::forUser($agent)->allows('ledger.post', $company)` or `[$company]` — and,
+when none is named, in the **ambient** scope. When the scope comes from tenancy
+rather than a route parameter, use the `callback` resolver:
+
+```php
+// config/permixion.php
+'teams' => [
+    'enabled' => true,
+    'resolver' => 'callback',
+    'callback' => fn () => app(CurrentCompany::class)->get(),
+],
+```
+
+#### Caching
+
+Effective permissions are memoised for one request per holder and scope, and
+never across requests (the memo is bound `scoped`, so Octane and queue workers
+start each request and job empty). Every permixion write clears it. If you
+change something mid-request that permixion cannot see — revoke a through holder,
+or write a taggable row directly — call `Permixion::flushEffectivePermissions()`
+before checking again in the same request.
+
+**Long-lived processes.** The framework resets the memo for each HTTP request,
+Octane request and queued job, and nowhere else. A daemon, a stdio tool server, a
+scheduler loop or a long artisan command keeps one memo for its life and will not
+see a role removed or a key revoked by another process. Flush it at the start of
+each unit of work — a message, a tool call, a tenant in a loop:
+
+```php
+foreach ($tenants as $tenant) {
+    Permixion::flushEffectivePermissions();   // or app()->forgetScopedInstances()
+    // ... checks for this tenant
+}
+```
+
+Or bound how long a result may be reused with `permixion.memo.ttl` (seconds;
+`null`, the default, keeps it for the unit of work; `0` never memoises).
 
 ### Blade Directives
 

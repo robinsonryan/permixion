@@ -1,0 +1,156 @@
+{
+  "module": "acting-for",
+  "reviewed_commit": "8d37460241364525c9f11ff8a787aee45544b8da",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "blocker",
+      "file": "src/Traits/HasRoles.php",
+      "line": 100,
+      "summary": "Role questions (hasRole family, the role and role_or_permission middleware, the @role directives, getAllPermissions) ignore throughs, ceilings and the inactive state, so a revoked or capped holder is admitted",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "b14c46aba6e92f41caf1d061dd3217866ab15607",
+      "reason": null,
+      "found_by": [
+        "fable",
+        "codex"
+      ],
+      "codex_id": 1,
+      "codex_run": "2026-11-10T17:47:07Z"
+    },
+    {
+      "id": 2,
+      "severity": "blocker",
+      "file": "src/Traits/HasRoles.php",
+      "line": 323,
+      "summary": "A scope passed to can() is dropped when the check falls through to the gate hook, which answers in the ambient scope: a contract-declaring user capped to viewer in one team passes can('x', $thatTeam) on rights held in the current team",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "eef327de0f741022ee9d62e06f3f1693892b74e3",
+      "reason": null,
+      "found_by": [
+        "fable",
+        "codex"
+      ],
+      "codex_id": 2,
+      "codex_run": "2026-11-10T17:47:07Z"
+    },
+    {
+      "id": 3,
+      "severity": "major",
+      "file": "src/Traits/HasRoles.php",
+      "line": 88,
+      "summary": "syncRoles() that changes a capped holder's role replaces the capped assignment with an uncapped one, and has no way to carry throughs: the holder ends up with more than what it acts through allows",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "efe8bd285ea4f3a3a71a7ecb94ab75324a63d4bd",
+      "reason": null
+    },
+    {
+      "id": 4,
+      "severity": "major",
+      "file": "src/Permixion.php",
+      "line": 707,
+      "summary": "Two routes to one role share one assignment: a capped route silently caps an existing uncapped membership, removing one route removes both, and two capped routes are AND-ed; no error tells the caller",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "3cf88fbf471091a60de9624d674991c166691764",
+      "reason": null,
+      "found_by": [
+        "fable",
+        "codex"
+      ],
+      "codex_id": 4,
+      "codex_run": "2026-11-10T17:47:07Z"
+    },
+    {
+      "id": 5,
+      "severity": "minor",
+      "file": "src/Permixion.php",
+      "line": 711,
+      "summary": "The assignment row and its throughs are written without a transaction: a failure between the two leaves the role stored with no cap",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "dba786ea68313ed3f371d20b1755e30a0fe3d273",
+      "reason": null,
+      "found_by": [
+        "fable",
+        "codex"
+      ],
+      "codex_id": 3,
+      "codex_run": "2026-11-10T17:47:07Z"
+    },
+    {
+      "id": 6,
+      "severity": "minor",
+      "file": "src/PermixionServiceProvider.php",
+      "line": 31,
+      "summary": "The effective-permissions memo is reset only per HTTP request and per queue job; in any other long-lived process a role removed or a through revoked by another process keeps granting until the process exits",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "34ab68cd194820a76805429dc7aafef4b70e4d48",
+      "reason": null
+    },
+    {
+      "id": 7,
+      "severity": "minor",
+      "file": "tests/Feature/ActingForTest.php",
+      "line": 113,
+      "summary": "No test tells 'throughs are added' from 'throughs are replaced' on a re-assign (a widening mutant passes the whole suite); the memo flush after givePermissionTo and the config part of the memo key are also unpinned",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "339c0757c8c8843e410939cb023b1e70dfbee790",
+      "reason": null
+    },
+    {
+      "id": 8,
+      "severity": "minor",
+      "file": "database/migrations/2024_01_05_000000_create_permixion_assignment_throughs_table.php",
+      "line": 39,
+      "summary": "harness db-check fails on the new migration: its incrementing branch gives the table a bigint primary key instead of a database-generated UUID v7",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "db4cda20e7210df30da4d76c33a6b38f2be473d1",
+      "reason": null,
+      "found_by": [
+        "fable",
+        "codex"
+      ],
+      "codex_id": 5,
+      "codex_run": "2026-11-10T17:47:07Z"
+    },
+    {
+      "id": 9,
+      "severity": "minor",
+      "file": "src/Permixion.php",
+      "line": 802,
+      "summary": "detachAllUserRoles() and userHasDirectPermission() lost their only callers in this diff and are now dead public engine methods",
+      "scope": "module",
+      "outcome": "fixed",
+      "fixed_in": "998881d19a6a1f39bdf612f44ba94536d6d52744",
+      "reason": null
+    }
+  ],
+  "engines": [
+    {
+      "engine": "fable",
+      "status": "reviewed"
+    },
+    {
+      "engine": "codex",
+      "status": "reviewed",
+      "model": "gpt-6-astra",
+      "effort": "high",
+      "tokens": {
+        "input": 797092,
+        "cached_input": 696320,
+        "output": 6321,
+        "reasoning": 2793
+      },
+      "seconds": 221.0,
+      "reviewed_commit": "8d37460241364525c9f11ff8a787aee45544b8da",
+      "run_at": "2026-11-10T17:47:07Z"
+    }
+  ]
+}

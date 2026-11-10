@@ -2,6 +2,8 @@
 
 namespace RobinsonRyan\Permixion;
 
+use ArrayObject;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
@@ -23,11 +25,17 @@ class PermixionServiceProvider extends ServiceProvider
 
         $this->app->singleton(Permixion::class);
         $this->app->alias(Permixion::class, 'permixion');
+
+        // Effective permissions are memoised per request, never across: `scoped`
+        // gives Octane and queue workers a fresh memo for every request and job.
+        $this->app->scoped('permixion.effective-memo', fn (): ArrayObject => new ArrayObject);
     }
 
     public function boot(): void
     {
         $this->publishConfig();
+        $this->loadMigrations();
+        $this->publishMigrations();
         $this->registerCommands();
         $this->registerMiddleware();
         $this->registerBladeDirectives();
@@ -39,6 +47,29 @@ class PermixionServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../config/permixion.php' => config_path('permixion.php'),
         ], 'permixion-config');
+    }
+
+    /**
+     * Load the package's migration unless the consumer has published it —
+     * publishing means they took ownership, and loading it too would run it twice.
+     */
+    protected function loadMigrations(): void
+    {
+        if (! $this->migrationsPublished()) {
+            $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        }
+    }
+
+    protected function publishMigrations(): void
+    {
+        $this->publishes([
+            __DIR__.'/../database/migrations' => database_path('migrations'),
+        ], 'permixion-migrations');
+    }
+
+    private function migrationsPublished(): bool
+    {
+        return count(glob(database_path('migrations/*_create_permixion_assignment_throughs_table.php')) ?: []) > 0;
     }
 
     protected function registerCommands(): void
@@ -113,13 +144,20 @@ class PermixionServiceProvider extends ServiceProvider
                 return null;
             }
 
+            // A scope named in the arguments is the scope answered — never the
+            // ambient one. HasRoles::can() hands a check it refused in the named
+            // scope on to the Gate; answering that in the current team would
+            // grant there on rights held here.
+            $scope = app(Permixion::class)->scopeFromArguments($arguments)
+                ?? app(Permixion::class)->resolveCurrentScope();
+
             // Super admin is deliberate god-mode and stays unconditional — it is
-            // not narrowed by defer_to_policies.
-            if (config('permixion.super_admin.enabled')) {
-                $superAdminRole = config('permixion.super_admin.role');
-                if ($superAdminRole !== null && $user->hasRole($superAdminRole)) {
-                    return true;
-                }
+            // not narrowed by defer_to_policies. "Super admin" means an UNCAPPED
+            // one: a super-admin role held through a capped holder, under a
+            // withCeiling(), or by an inactive holder is not god-mode.
+            if ($user instanceof Model
+                && app(Permixion::class)->effectivePermissionsFor($user, $scope)->isUnlimited()) {
+                return true;
             }
 
             // A permission name cannot answer a per-instance question. When the
@@ -129,8 +167,6 @@ class PermixionServiceProvider extends ServiceProvider
                 && app(Permixion::class)->argumentsCarryPolicySubject($arguments)) {
                 return null;
             }
-
-            $scope = app(Permixion::class)->resolveCurrentScope();
 
             if ($user->hasPermissionTo($ability, $scope)) {
                 return true;

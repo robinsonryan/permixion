@@ -2,9 +2,11 @@
 
 namespace RobinsonRyan\Permixion\Traits;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use RobinsonRyan\Permixion\Models\Permission;
 use RobinsonRyan\Permixion\Models\Role;
+use RobinsonRyan\Permixion\Permixion;
 use RobinsonRyan\Taxon\Contracts\Scope;
 
 /**
@@ -15,6 +17,13 @@ use RobinsonRyan\Taxon\Contracts\Scope;
  */
 trait HasRoles
 {
+    /**
+     * Request-scoped ceilings added by withCeiling(). Never persisted.
+     *
+     * @var array<int, string>
+     */
+    protected array $permixionCeilings = [];
+
     /*
     |--------------------------------------------------------------------------
     | Role Assignment
@@ -22,16 +31,24 @@ trait HasRoles
     */
 
     /**
+     * Assign one or more roles, optionally acting THROUGH holders and/or roles.
+     *
+     * Each through caps the assignment: a holder to what that holder may do in
+     * the same scope (recursively), a role to that role's permissions. Throughs
+     * are only ever added — re-assigning with fewer never lifts a cap; remove the
+     * role and assign it again to change them.
+     *
      * @param  string|Role|array<int, string|Role>  $roles
+     * @param  array<int, Model|Role|string>  $through
      */
-    public function assignRole(string|Role|array $roles, ?Scope $scope = null): static
+    public function assignRole(string|Role|array $roles, ?Scope $scope = null, array $through = []): static
     {
         $scope ??= app('permixion')->resolveCurrentScope();
         $roles = is_array($roles) ? $roles : [$roles];
 
         foreach ($roles as $role) {
             $roleName = $role instanceof Role ? $role->name : $role;
-            app('permixion')->attachRoleToUser($this, $roleName, $scope);
+            app('permixion')->attachRoleToUser($this, $roleName, $scope, $through);
         }
 
         return $this;
@@ -48,18 +65,23 @@ trait HasRoles
     }
 
     /**
+     * Make the roles in this exact scope exactly $roles — never widening.
+     *
+     * A role already held is left in place, throughs and all. A capped role it
+     * removes hands its throughs on to the roles it newly assigns, so changing a
+     * capped holder's role keeps the cap. $through caps every role in $roles,
+     * as assignRole()'s does.
+     *
      * @param  array<int, string|Role>  $roles
+     * @param  array<int, Model|Role|string>  $through
      */
-    public function syncRoles(array $roles, ?Scope $scope = null): static
+    public function syncRoles(array $roles, ?Scope $scope = null, array $through = []): static
     {
         $scope ??= app('permixion')->resolveCurrentScope();
 
-        app('permixion')->detachAllUserRoles($this, $scope);
+        $wanted = array_map(fn (string|Role $role): string => $role instanceof Role ? $role->name : $role, $roles);
 
-        foreach ($roles as $role) {
-            $roleName = $role instanceof Role ? $role->name : $role;
-            app('permixion')->attachRoleToUser($this, $roleName, $scope);
-        }
+        app('permixion')->syncUserRoles($this, $wanted, $scope, $through);
 
         return $this;
     }
@@ -144,26 +166,46 @@ trait HasRoles
     */
 
     /**
+     * The roles in force in $scope — assigned, and surviving their throughs and
+     * ceilings whole. See getAssignedRoleNames() for what is merely stored.
+     *
      * @return Collection<int, Role>
      */
     public function getRoles(?Scope $scope = null): Collection
     {
         $scope ??= app('permixion')->resolveCurrentScope();
-        $categoryId = app('permixion')->rolesCategory()->id;
-        $pivotTable = config('taxon.tables.taggables', 'taggables');
+        $inForce = $this->getRoleNames($scope);
 
-        $query = $this->tags()->where('parent_id', $categoryId);
-        app('permixion')->applyReadScopeToPivot($query, $pivotTable, $scope);
-
-        return $query->get()->map(fn ($tag): Role => new Role($tag));
+        return app('permixion')->rolesCategory()
+            ->children()
+            ->whereIn('name', $inForce)
+            ->get()
+            ->map(fn ($tag): Role => new Role($tag))
+            ->values();
     }
 
     /**
+     * The names of the roles in force in $scope.
+     *
      * @return array<int, string>
      */
     public function getRoleNames(?Scope $scope = null): array
     {
         return app('permixion')->getUserRoleNames($this, $scope);
+    }
+
+    /**
+     * The names of the roles stored against this holder in $scope, whether in
+     * force or not — for showing or reconciling assignments. Never authorize on
+     * it: a capped or inactive holder's roles are listed here too.
+     *
+     * @return array<int, string>
+     */
+    public function getAssignedRoleNames(?Scope $scope = null): array
+    {
+        $scope ??= app('permixion')->resolveCurrentScope();
+
+        return app('permixion')->getUserAssignedRoleNames($this, $scope);
     }
 
     /*
@@ -172,19 +214,66 @@ trait HasRoles
     |--------------------------------------------------------------------------
     */
 
+    /**
+     * Whether this holder may do $permission in $scope — decided by its
+     * effective permissions, so throughs, ceilings, the inactive state and the
+     * super-admin role all apply.
+     */
     public function hasPermissionTo(string|Permission $permission, ?Scope $scope = null): bool
     {
         $scope ??= app('permixion')->resolveCurrentScope();
         $permissionName = $permission instanceof Permission ? $permission->name : $permission;
 
-        if (config('permixion.super_admin.enabled')) {
-            $superAdminRole = config('permixion.super_admin.role');
-            if ($superAdminRole !== null && $this->hasRole($superAdminRole, $scope)) {
-                return true;
-            }
+        return app('permixion')->effectivePermissionsFor($this, $scope)->grants($permissionName);
+    }
+
+    /**
+     * What this holder may do in $scope: the union over its assignments there of
+     * (role ∩ every through), plus direct permissions, cut by any ceiling.
+     *
+     * Permission names and wildcard patterns as stored. An uncapped super admin
+     * may do anything; that is listed as every permission that exists.
+     *
+     * @return Collection<int, string>
+     */
+    public function effectivePermissions(?Scope $scope = null): Collection
+    {
+        $permixion = app(Permixion::class);
+        $scope ??= $permixion->resolveCurrentScope();
+        $effective = $permixion->effectivePermissionsFor($this, $scope);
+
+        if ($effective->isUnlimited()) {
+            return (new Collection($permixion->getAllPermissions()))
+                ->map(fn (Permission $permission): string => $permission->name)
+                ->values();
         }
 
-        return app('permixion')->userHasPermission($this, $permissionName, $scope);
+        return new Collection($effective->patterns());
+    }
+
+    /**
+     * A copy of this holder capped, for this request only, at $role's
+     * permissions — e.g. a person acting through an app's key asks for less than
+     * the key holds. Immutable: the original is untouched. Ceilings stack (they
+     * intersect), can never widen, and are not persisted or serialized — a
+     * model re-fetched from the database (a queued job) has none.
+     */
+    public function withCeiling(string|Role $role): static
+    {
+        $copy = clone $this;
+        $copy->permixionCeilings[] = $role instanceof Role ? $role->name : $role;
+
+        return $copy;
+    }
+
+    /**
+     * The ceilings withCeiling() has added to this instance.
+     *
+     * @return array<int, string>
+     */
+    public function permixionCeilings(): array
+    {
+        return $this->permixionCeilings;
     }
 
     /**
@@ -239,15 +328,8 @@ trait HasRoles
             return $this->parentCan($ability, $arguments);
         }
 
-        // Only subscript what is actually subscriptable. A plain object argument
-        // (`$user->can('update', $dto)`) previously fataled here.
-        $scope = null;
-        if (is_array($arguments) || $arguments instanceof \ArrayAccess) {
-            $first = $arguments[0] ?? null;
-            if ($first instanceof Scope) {
-                $scope = $first;
-            }
-        }
+        // A bare Scope scopes exactly as [$scope] does.
+        $scope = app('permixion')->scopeFromArguments($arguments);
 
         if (($ability instanceof Permission || is_string($ability)) && $this->hasPermissionTo($ability, $scope)) {
             return true;
@@ -327,19 +409,21 @@ trait HasRoles
     }
 
     /**
+     * Every permission this holder may use in $scope — its effective
+     * permissions, as Permission objects. An uncapped super admin lists every
+     * permission that exists.
+     *
      * @return Collection<array-key, Permission>
      */
     public function getAllPermissions(?Scope $scope = null): Collection
     {
-        $scope ??= app('permixion')->resolveCurrentScope();
+        $names = $this->effectivePermissions($scope)->all();
 
-        $rolePermissions = collect();
-        foreach ($this->getRoles($scope) as $role) {
-            $rolePermissions = $rolePermissions->merge($role->getPermissions());
-        }
-
-        $directPermissions = $this->getDirectPermissions($scope);
-
-        return $rolePermissions->merge($directPermissions)->unique('name');
+        return app('permixion')->permissionsCategory()
+            ->children()
+            ->whereIn('name', $names)
+            ->get()
+            ->map(fn ($tag): Permission => new Permission($tag))
+            ->values();
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace RobinsonRyan\Permixion\Contracts;
 
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use RobinsonRyan\Permixion\Models\Permission;
 use RobinsonRyan\Permixion\Models\Role;
@@ -15,15 +16,17 @@ interface HasPermissions
 
     /**
      * @param  string|Role|array<int, string|Role>  $roles
+     * @param  array<int, Model|Role|string>  $through  holders and/or ceiling roles the assignment acts through
      */
-    public function assignRole(string|Role|array $roles, ?Scope $scope = null): static;
+    public function assignRole(string|Role|array $roles, ?Scope $scope = null, array $through = []): static;
 
     public function removeRole(string|Role $role, ?Scope $scope = null): static;
 
     /**
      * @param  array<int, string|Role>  $roles
+     * @param  array<int, Model|Role|string>  $through  holders and/or ceiling roles every role acts through
      */
-    public function syncRoles(array $roles, ?Scope $scope = null): static;
+    public function syncRoles(array $roles, ?Scope $scope = null, array $through = []): static;
 
     // Role checks
     public function hasRole(string|Role $role, ?Scope $scope = null): bool;
@@ -52,6 +55,13 @@ interface HasPermissions
 
     // Permission checks
     public function hasPermissionTo(string|Permission $permission, ?Scope $scope = null): bool;
+
+    /**
+     * @return Collection<int, string>
+     */
+    public function effectivePermissions(?Scope $scope = null): Collection;
+
+    public function withCeiling(string|Role $role): static;
 
     /**
      * @param  array<int, string|Permission>  $permissions

@@ -9,27 +9,17 @@ Composer name: `robinsonryan/permixion` — a **library**, not an application.
 
 ## Conventions
 
-@import ./constitution.md
-@import ./imports/package-conventions.md
-@import ./imports/package-quality-gate.md
-@import ./imports/testing-conventions.md
-@import ./imports/php-conventions.md
-@import ./imports/git-conventions.md
+@.claude/constitution.md
+@.claude/stack.md
 
-> Linking the `laravel-package` stack also drops the inherited Laravel app
-> conventions into `.claude/imports/` — `authorization-conventions.md`,
-> `frontend-conventions.md`, `pwa-conventions.md`, `ddev-worktrees.md`. They are
-> **deliberately not imported above**: they describe Inertia `can` maps, app-shaped
-> Vite wiring, and nested app worktrees, none of which exist in a package. Read
-> them if a question genuinely calls for one; do not load them by default.
->
-> Permixion has **no frontend half** — there is no `resources/`, no build step, no
-> `package.json`. `frontend-conventions.md` stays out.
+> Which rules load is set by `harness.yaml` and assembled into `.claude/stack.md`
+> (`harness stack apply`); a package with a frontend half adds the frontend layers
+> there (today: `yikes`, `four-corners`). Don't import convention files by hand.
 
 > `.claude/` is a set of **harness symlinks** and is gitignored — a fresh clone has
-> none of them and the `@import`s above resolve to nothing. If a convention file is
+> none of them and the imports above resolve to nothing. If a convention file is
 > missing, restore the link rather than guessing:
-> `~/workspace/harness/link.sh project laravel-package $(pwd)`
+> `harness stack apply`
 
 ## The sharpest edge: two authorization short-circuits
 
@@ -60,9 +50,14 @@ and runs in this order:
    short-circuit on in every consumer that only uses the trait. Two fixtures
    (`tests/Fixtures/User.php` without the contract, `GateUser.php` with it) pin
    both sides.
-2. Super admin — if `super_admin.enabled` and the user holds `super_admin.role`,
-   return `true`. Unconditional god-mode, deliberately **not** narrowed by
-   `defer_to_policies`.
+   The scope answered is the one named in `$arguments` (a bare `Scope` or one
+   first in the array — `Permixion::scopeFromArguments()`), else the ambient one
+   (since 0.6.0; before, always ambient, which re-granted a scoped `can()` that
+   `HasRoles::can()` had refused). Pinned in `GateBeforeTest`.
+2. Super admin — if the user's effective permissions in that scope are
+   *unlimited* (`super_admin.enabled`, `super_admin.role` held with no through, by
+   an active holder, under no `withCeiling()`), return `true`. God-mode,
+   deliberately **not** narrowed by `defer_to_policies`.
 3. `defer_to_policies` — see below.
 4. `$user->hasPermissionTo($ability, $scope)` → `true`, else `null`.
 
@@ -114,7 +109,8 @@ The trait overrides `can()`. This has **no analogue in spatie**, is **not**
 governed by `register_gate`, has no contract guard, and applies wherever the trait
 is used. Since 0.4.0 it is narrowed unconditionally: if `$arguments` carry a
 policy subject it delegates straight to `parent::can()`; otherwise it tries
-`hasPermissionTo()` and falls back to the parent.
+`hasPermissionTo()` and falls back to the parent. Since 0.6.0 a bare Scope
+argument scopes it exactly as `[$scope]` does (`Permixion::scopeFromArguments()`).
 
 Both doors share one definition of "is this a policy question" —
 `Permixion::argumentsCarryPolicySubject()`. A `Scope` does not count as a subject
@@ -127,7 +123,7 @@ sharing it so they cannot drift apart.
 |---|---|
 | `Permixion` (`src/Permixion.php`) | The engine. Container singleton, aliased `permixion`; every other surface calls into it via `app('permixion')`. |
 | `Facades\Permixion` | Static face of the above — `createRole`, `findRole(OrFail)`, `createPermission`, `getAllRoles`, `deleteRole`, `clearCache`, … |
-| `Traits\HasRoles` | Mixed into the consumer's user model. `assignRole` / `removeRole` / `syncRoles`, `hasRole` / `hasAnyRole` / `hasAllRoles` / `hasExactRoles` / `hasRoleAnywhere`, `hasPermissionTo` / `hasAnyPermission` / `hasAllPermissions`, `givePermissionTo` / `revokePermissionTo`, `getRoles` / `getRoleNames` / `getDirectPermissions` / `getAllPermissions`, and the `can()` override. |
+| `Traits\HasRoles` | Mixed into the consumer's user model. `assignRole` / `removeRole` / `syncRoles`, `hasRole` / `hasAnyRole` / `hasAllRoles` / `hasExactRoles` / `hasRoleAnywhere`, `hasPermissionTo` / `hasAnyPermission` / `hasAllPermissions`, `givePermissionTo` / `revokePermissionTo`, `getRoles` / `getRoleNames` / `getAssignedRoleNames` / `getDirectPermissions` / `getAllPermissions`, and the `can()` override. Role questions answer *in force* (survives its throughs whole), never merely assigned; `getAssignedRoleNames` is the raw stored list. |
 | `Contracts\HasPermissions` | Opt-in marker + interface for the `Gate::before` hook. Mirrors the trait's signatures. |
 | `Models\Role` / `Models\Permission` | **Plain PHP wrappers around a Taxon `Tag`** — see gotchas. |
 | `GlobalScope` | Singleton sentinel meaning "the unscoped assignment", as opposed to `null` = "resolve ambient scope". |
@@ -136,10 +132,11 @@ sharing it so they cannot drift apart.
 | Middleware aliases | `role:a|b`, `permission:x|y`, `role_or_permission:a|x` — registered in the provider; refusals throw `UnauthorizedException` (403) carrying `getRequiredRoles()` / `getRequiredPermissions()` for the consumer to render. |
 | Artisan | `permixion:create-role`, `permixion:create-permission`, `permixion:show-permissions [--role=]` — console only. |
 
-## Domain model — no tables of its own
+## Domain model — Taxon's tables, plus one
 
-Permixion owns **zero migrations**. Everything lives in Taxon's two tables,
-`tags` and `taggables` (names configurable via `taxon.tables.*`):
+Roles and permissions live in Taxon's two tables, `tags` and `taggables` (names
+configurable via `taxon.tables.*`). Permixion owns one migration,
+`permixion_assignment_throughs` (since 0.6.0), loaded unless published:
 
 - Two root category tags, `roles` and `permissions` (slugs configurable via
   `permixion.categories.*`), created lazily by `rolesCategory()` /
@@ -150,6 +147,18 @@ Permixion owns **zero migrations**. Everything lives in Taxon's two tables,
   uses Taxon's `HasTags`).
 - **User → role/permission** is a `taggables` row against the user model, with
   `scope_type` / `scope_id` carrying the scope (both `NULL` = global).
+- **Acting for** — an assignment's throughs are rows in
+  `permixion_assignment_throughs` keyed by that `taggables.id`: a holder morph or
+  a ceiling role id. No foreign keys (Taxon's published migrations can sort after
+  it); the assignment and its throughs are written in one transaction and read
+  in one statement (`roleAssignments()`) — a missing through row reads as
+  uncapped. Every permission check goes through
+  `Permixion::effectivePermissionsFor()` — the union over assignments of role ∩
+  every through, recursive, cycle-safe, depth-limited, failing closed — and every
+  role question through `roleNamesInForce()` (a role counts only if it survives
+  its throughs whole). `assignRole` refuses (`AssignmentRouteConflict`) to merge a
+  capped and an uncapped route to one role. The decisions and the ledger are in
+  `docs/spec/acting-for.md`.
 
 **Identity is `Tag.name`, verbatim — never the slug.** The whole trait
 deliberately bypasses Taxon's `addTag`/`hasTagIn` helpers because those run input
@@ -178,8 +187,8 @@ Other concepts worth knowing:
 - **Scope** (`RobinsonRyan\Taxon\Contracts\Scope`) — resolved from route /
   session / callback per `permixion.teams.resolver`, and **only** when
   `teams.enabled` is true. `resolveCurrentScope()` reads ambient request state; it
-  never reads the scope of the thing being authorized, and it does not read a
-  `Scope` passed in gate `$arguments`.
+  never reads the scope of the thing being authorized. The `Gate::before` hook
+  and `can()` prefer a `Scope` passed in the arguments and fall back to it.
 - **`teams.global_fallback`** — off by default. On, a scoped **read** also matches
   unscoped rows (spatie teams semantics). Writes always target the exact scope.
 - **Wildcards** — `wildcards.enabled` (default on): a stored `posts.*` matches any
@@ -188,7 +197,11 @@ Other concepts worth knowing:
   `PermissionDoesNotExist` etc. on writes. Lenient mode auto-creates instead.
   Reads never throw in either mode.
 - **Cache** — role→permission name lists only, keyed `permixion.role_permissions.<role>`.
-  Every mutating path calls `clearCache()`; a new one must too.
+  Every mutating path calls `clearCache()`; a new one must too. Effective
+  permissions are memoised per request in the `scoped` `permixion.effective-memo`
+  binding; `clearCache()` and every assignment write flush it. Only requests and
+  queued jobs reset it — long-lived processes flush per unit of work, or set
+  `permixion.memo.ttl`.
 
 ## Gotchas a newcomer will otherwise hit
 
@@ -248,28 +261,19 @@ Full definition: `imports/package-quality-gate.md`. Skill: `/package-quality`.
 
 ## Testing
 
-Pest 4 + Orchestra Testbench against **SQLite in-memory** — see
-`tests/TestCase.php`, which also forces `taxon.id_type => incrementing` and
-`permixion.strict => true`, loads Taxon's migrations out of `vendor/`, and creates
-the `users` / `teams` / `posts` fixture tables.
+Pest 4 + Orchestra Testbench against **PostgreSQL** (DDEV's `db`) — see
+`tests/TestCase.php`. It uses `RefreshDatabase`, forces `taxon.id_type =>
+incrementing` and `permixion.strict => true`, and registers Taxon's migrations
+(from `vendor/`) and the fixture migrations (`tests/Fixtures/database/migrations`)
+as migrator paths. The database is `testing`, or `testing_wt_<slug>` for a checkout
+nested at `.claude/worktrees/<slug>/`, created on first run;
+`PERMIXION_TEST_DB_*` override it. Drop a worktree's database at teardown
+(`ddev exec "dropdb -h db -U db testing_wt_<slug>"`).
 
-**`tests/Postgres/` is the exception, and the pattern to copy.** It runs against
-the DDEV Postgres service on its own connection, because it needs
-`tags`/`taggables` built in Taxon's `uuid7` mode — a `uuidv7()` column default
-that SQLite cannot express at all. It rebuilds that schema per test and skips
-loudly where no server is reachable.
-
-It builds and drops tables, so it does that in **`db_testing`**, never the
-development `db`: isolation comes from a separate database. The file creates
-`db_testing` on first run over a maintenance connection, and refuses to start at
-all if the two names resolve the same, so the rule is enforced rather than
-configured. `PGDATABASE_TESTING` overrides the name. The database is created by
-the test rather than by a DDEV post-start hook on purpose — a hook only fires on
-`ddev restart`, and a precondition that can go stale is the class of defect this
-file exists to catch. Everything else still runs on SQLite,
-where `uuid`, `bigint` and `varchar` collapse into one loose affinity and a
-column-type defect is unfalsifiable; if a new test turns on real database
-behaviour, put it here rather than assuming the shared connection will show it.
+**`tests/Postgres/`** additionally builds `tags`/`taggables` in Taxon's `uuid7`
+mode on a connection of its own, in `<suite database>_uuid7`, rebuilding that
+schema per test (`PGDATABASE_TESTING` overrides the name; it refuses to run in the
+development `db`).
 
 ```bash
 ddev composer test
@@ -283,6 +287,10 @@ Coverage worth knowing about before you change behaviour: `GateBeforeTest` and
 no-deny and no-throw guarantees; `NameIdentityTest` pins name-not-slug identity;
 `GlobalScopeAndFallbackTest` pins scope semantics. These are characterization
 tests — if one goes red you have changed an authorization decision, not a detail.
+`ActingForTest` pins acting-for, each grant beside its refusal (cycles, depth,
+inactive and deleted throughs, capped super admin, `withCeiling`);
+`PennywiseParityTest` checks every combination of Pennywise's rights rules against
+a port of its code.
 
 `SeederAcceptanceTest` is the release bar for a Taxon upgrade: it drives role and
 permission seeding through `db:seed` with application-shaped seeder classes,

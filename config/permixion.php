@@ -42,7 +42,10 @@ return [
         // Session key (when resolver is 'session')
         'session_key' => 'current_team_id',
 
-        // Custom resolver callback (when resolver is 'callback')
+        // Custom resolver callback (when resolver is 'callback'). Use this when
+        // the scope comes from tenancy rather than a route parameter — and for
+        // non-user holders checked through Gate::forUser($agent), whose scope
+        // the Gate::before hook resolves from here. Must return a Scope or null.
         'callback' => null, // e.g., fn() => app('current.team')
 
         // When true, role/permission READ checks against a specific scope
@@ -64,6 +67,61 @@ return [
     'super_admin' => [
         'enabled' => true,
         'role' => 'super-admin',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Acting For
+    |--------------------------------------------------------------------------
+    |
+    | An assignment may act THROUGH holders and roles —
+    | `$agent->assignRole('accountant', $company, [$owner, 'drafter'])` — and is
+    | then capped by what each through may do in the same scope. A through
+    | holder may itself act through others.
+    |
+    | max_depth: how many holders deep a chain is followed (an integer, 1 or
+    | more). A through further away than this caps its assignment to nothing,
+    | so a too-deep chain fails closed rather than granting.
+    |
+    */
+    'through' => [
+        'max_depth' => 5,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Effective-permissions memo
+    |--------------------------------------------------------------------------
+    |
+    | Effective permissions are memoised per holder and scope in a `scoped`
+    | binding, which the framework resets for every HTTP request, Octane request
+    | and queued job — and nowhere else. A daemon, a stdio tool server, a
+    | scheduler loop or a long artisan command keeps one memo for its whole life
+    | and will not see a role removed or a holder revoked by another process.
+    | In such a process, call Permixion::flushEffectivePermissions() (or
+    | app()->forgetScopedInstances()) at the start of each unit of work, and/or
+    | bound the memo here.
+    |
+    | ttl: seconds a memoised result may be reused. null = for the life of the
+    | scoped binding (the default); 0 = never memoise.
+    |
+    */
+    'memo' => [
+        'ttl' => null,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Tables
+    |--------------------------------------------------------------------------
+    |
+    | Roles and permissions live in Taxon's tables. The one table permixion
+    | owns stores what an assignment acts through. Rename it here, before
+    | migrating, if the default collides with one of yours.
+    |
+    */
+    'tables' => [
+        'assignment_throughs' => 'permixion_assignment_throughs',
     ],
 
     /*
