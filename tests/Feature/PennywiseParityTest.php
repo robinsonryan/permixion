@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Gate;
+use RobinsonRyan\Permixion\Exceptions\AssignmentRouteConflict;
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\GlobalScope;
 use RobinsonRyan\Permixion\Tests\Fixtures\AccessGrant;
@@ -164,6 +165,9 @@ beforeEach(function (): void {
 
     foreach (PW_ROLES as $role) {
         Permixion::createRole($role, array_map(fn (string $a): string => "pw.{$a}", pwRoleAbilities($role)));
+        // A Firm route is held under its own role name, so it never collapses
+        // into a Membership of the same role (permixion refuses that merge).
+        Permixion::createRole("firm-{$role}", array_map(fn (string $a): string => "pw.{$a}", pwRoleAbilities($role)));
     }
 
     // Ceiling roles: an Agent in drafts-only mode loses post and close; a v1
@@ -228,19 +232,12 @@ it('a person on a Company: Membership, Firm assignments under a grant, Server Ad
     $mismatches = [];
 
     foreach ($cases as [$serverAdmin, $membership, $firm]) {
-        // One assignment per (holder, role, scope): a Membership and a
-        // Firm route to the SAME role cannot both be stored. That case is
-        // pinned separately below, not compared here.
-        if (in_array($membership, array_column($firm, 'assigned'), true)) {
-            continue;
-        }
-
         $user = ($this->makeUser)($membership, $serverAdmin);
 
         foreach ($firm as $route) {
             $grant = AccessGrant::create(['name' => 'Grant', 'revoked_at' => $route['revoked'] ? now() : null]);
             $grant->assignRole($route['granted'], $this->company);
-            $user->assignRole($route['assigned'], $this->company, [$grant]);
+            $user->assignRole("firm-{$route['assigned']}", $this->company, [$grant]);
         }
 
         $expected = pwUserAbilities($membership, $firm, $serverAdmin);
@@ -354,11 +351,11 @@ it('a person who leaves the Firm loses the route when the assignment is removed'
     $user = ($this->makeUser)(null, false);
     $grant = AccessGrant::create(['name' => 'Grant']);
     $grant->assignRole('owner', $this->company);
-    $user->assignRole('accountant', $this->company, [$grant]);
+    $user->assignRole('firm-accountant', $this->company, [$grant]);
 
     expect(permixionAbilities($user, $this->company))->toBe(pwRoleAbilities('accountant'));
 
-    $user->removeRole('accountant', $this->company);
+    $user->removeRole('firm-accountant', $this->company);
 
     expect(permixionAbilities($user, $this->company))->toBe([]);
 });
@@ -370,14 +367,30 @@ it('a person who leaves the Firm loses the route when the assignment is removed'
  * (the higher); permixion answers narrower. Pinned so the gap is visible: it
  * fails closed, never open.
  */
-it('KNOWN GAP: a Membership and a Firm route to the same role collapse into one, capped, assignment', function (): void {
+it('a Firm route under the same role name as a Membership is refused, not collapsed', function (): void {
     $user = ($this->makeUser)('bookkeeper', false);
     $grant = AccessGrant::create(['name' => 'Grant']);
     $grant->assignRole('viewer', $this->company);
-    $user->assignRole('bookkeeper', $this->company, [$grant]);
+
+    expect(fn () => $user->assignRole('bookkeeper', $this->company, [$grant]))
+        ->toThrow(AssignmentRouteConflict::class);
+
+    // The Membership is untouched: still the whole of bookkeeper.
+    expect(permixionAbilities($user, $this->company))->toBe(pwRoleAbilities('bookkeeper'));
+});
+
+it('a Membership and a same-role Firm route held under route-specific names give Pennywise\'s answer, and leaving the Firm keeps the Membership', function (): void {
+    $user = ($this->makeUser)('bookkeeper', false);
+    $grant = AccessGrant::create(['name' => 'Grant']);
+    $grant->assignRole('viewer', $this->company);
+    $user->assignRole('firm-bookkeeper', $this->company, [$grant]);
 
     $pennywise = pwUserAbilities('bookkeeper', [['assigned' => 'bookkeeper', 'granted' => 'viewer', 'revoked' => false]], false);
 
-    expect($pennywise)->toBe(pwRoleAbilities('bookkeeper'))
-        ->and(permixionAbilities($user, $this->company))->toBe(['read']);
+    expect(permixionAbilities($user, $this->company))->toBe($pennywise)
+        ->and($pennywise)->toBe(pwRoleAbilities('bookkeeper'));
+
+    $user->removeRole('firm-bookkeeper', $this->company);
+
+    expect(permixionAbilities($user, $this->company))->toBe(pwRoleAbilities('bookkeeper'));
 });

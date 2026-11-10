@@ -4,20 +4,6 @@
 > convention: `$CLAUDE_HARNESS_DIR/notes/implementation-queue.md`. Hand-editing is fine.
 
 ## Queued
-### Two routes to the same role collapse into one capped assignment
-- **Added**: 2026-11-10 · acting-for build (0.6.0)
-- **Tier**: needs a decision — it shapes the storage
-- **Why deferred**: the spec keys throughs to the assignment, and taxon's unique
-  index allows one assignment per (holder, role, scope)
-- **Context**: Pennywise's `User::roleOn()` takes the higher of a Membership and a
-  Firm route. When both name the same role, permixion holds one assignment carrying
-  the Firm grant as a through, so the Membership is capped too — narrower than
-  Pennywise (fails closed). Pinned by the KNOWN GAP test in
-  `tests/Feature/PennywiseParityTest.php`. Options: through *routes* (each
-  `assignRole` call with throughs adds an OR-ed route; a route-less call marks the
-  assignment uncapped; `removeRole` grows a `$through` to remove one route), or
-  Pennywise models the Firm route on a separate holder.
-
 ### Namespace the `parentCan()` trait helper
 - **Added**: 2026-08-08 · self-review of the 0.4.0 can() narrowing
 - **Tier**: SOLO
@@ -44,6 +30,16 @@
 ## Blocked
 
 ## Archive
+
+### ~~Two routes to the same role collapse into one capped assignment~~ — resolved 2026-11-10 in 0.6.0
+Decided: make the collapse loud rather than store routes. `assignRole()` throws
+`AssignmentRouteConflict` instead of merging a capped route into an uncapped
+assignment of the same role and scope, or an uncapped one into a capped one. A
+holder that needs both holds them under route-specific role names
+(`firm-bookkeeper` beside `bookkeeper`, same permissions); `PennywiseParityTest`
+now runs the full Membership × Firm product that way, same-role cases included.
+Pennywise adapts when it adopts permixion. Revisit stored routes only if a second
+consumer needs two firms granting the same route role.
 
 ### ~~Move the rest of the suite off SQLite onto PostgreSQL~~ — resolved 2026-11-10 in 0.6.0
 `tests/TestCase.php` runs on DDEV's Postgres with RefreshDatabase and migrator paths

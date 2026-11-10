@@ -63,6 +63,15 @@ before upgrading.
   `array $through = []` (also on the `HasPermissions` contract) that caps every
   role listed, as `assignRole()`'s does. The whole sync runs in one transaction.
 
+- **`assignRole()` refuses to merge two routes to one role.** Assigning a role
+  through a holder or ceiling when the holder already has it uncapped in that
+  scope, or with no through when it has it capped, now throws
+  `AssignmentRouteConflict` instead of folding both into one assignment (which
+  capped the uncapped route, and made removing one route remove both). Hold the
+  routes under route-specific role names (`firm-bookkeeper` beside `bookkeeper`).
+  Re-assigning with throughs onto a capped assignment still adds them; plain
+  re-assignment of an uncapped role is still a no-op.
+
 ### Added
 - `assignRole($roles, ?Scope $scope = null, array $through = [])` — the assignment
   is capped by every through: a holder model (what it may do in the same scope,

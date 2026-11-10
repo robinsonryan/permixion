@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use RobinsonRyan\Permixion\Exceptions\AssignmentRouteConflict;
 use RobinsonRyan\Permixion\Exceptions\RoleDoesNotExist;
 use RobinsonRyan\Permixion\Facades\Permixion;
 use RobinsonRyan\Permixion\GlobalScope;
@@ -103,11 +104,52 @@ describe('storing throughs with an assignment', function (): void {
         expect(DB::table('permixion_assignment_throughs')->count())->toBe(0);
     });
 
-    it('re-assigning with no throughs keeps the existing cap — a write never widens', function (): void {
+    it('refuses to re-assign a capped role uncapped — two routes to one role never merge silently', function (): void {
         $this->agent->assignRole('accountant', $this->team, ['drafter']);
+
+        expect(fn () => $this->agent->assignRole('accountant', $this->team))
+            ->toThrow(AssignmentRouteConflict::class, "'accountant'");
+
+        expect($this->agent->hasPermissionTo('ledger.post', $this->team))->toBeFalse()
+            ->and(DB::table('permixion_assignment_throughs')->count())->toBe(1);
+    });
+
+    it('refuses to cap a role already held uncapped, leaving that assignment whole', function (): void {
         $this->agent->assignRole('accountant', $this->team);
 
-        expect($this->agent->hasPermissionTo('ledger.post', $this->team))->toBeFalse();
+        expect(fn () => $this->agent->assignRole('accountant', $this->team, [$this->owner]))
+            ->toThrow(AssignmentRouteConflict::class, "'accountant'");
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue()
+            ->and(DB::table('permixion_assignment_throughs')->count())->toBe(0);
+    });
+
+    it('re-assigning an uncapped role uncapped, or a capped one with throughs, is not a conflict', function (): void {
+        $this->agent->assignRole('accountant', $this->team);
+        $this->agent->assignRole('accountant', $this->team);
+        $this->agent->assignRole('viewer', $this->team, ['drafter']);
+        $this->agent->assignRole('viewer', $this->team, ['drafter']);
+
+        expect(DB::table('permixion_assignment_throughs')->count())->toBe(1)
+            ->and($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+    });
+
+    it('the same role in another scope is another assignment, never a conflict', function (): void {
+        $this->agent->assignRole('accountant', $this->team);
+        $this->agent->assignRole('accountant', $this->otherTeam, ['viewer']);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue()
+            ->and($this->agent->hasPermissionTo('ledger.close', $this->otherTeam))->toBeFalse();
+    });
+
+    it('a syncRoles that would cap a role held uncapped is refused and changes nothing', function (): void {
+        $this->agent->assignRole(['accountant', 'reporter'], $this->team);
+
+        expect(fn () => $this->agent->syncRoles(['accountant'], $this->team, ['viewer']))
+            ->toThrow(AssignmentRouteConflict::class);
+
+        expect(sortedNames($this->agent->getAssignedRoleNames($this->team)))->toBe(['accountant', 'reporter'])
+            ->and($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
     });
 
     it('re-assigning with another through adds it, narrowing further', function (): void {

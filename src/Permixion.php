@@ -10,6 +10,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Cache;
 use InvalidArgumentException;
 use RobinsonRyan\Permixion\Contracts\CanBeInactive;
+use RobinsonRyan\Permixion\Exceptions\AssignmentRouteConflict;
 use RobinsonRyan\Permixion\Exceptions\PermissionAlreadyExists;
 use RobinsonRyan\Permixion\Exceptions\PermissionDoesNotExist;
 use RobinsonRyan\Permixion\Exceptions\PermissionSlugCollision;
@@ -912,15 +913,38 @@ class Permixion
                 ?? $this->createRole($roleName)->tag();
         }
 
-        if (! $this->userTagPivotExists($user, $tag->id, $scope)) {
+        $assignmentId = $this->userTagPivotId($user, $tag->id, $scope);
+
+        if ($assignmentId === null) {
             $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+            $assignmentId = $this->userTagPivotId($user, $tag->id, $scope);
+        } else {
+            // One assignment per holder, role and scope: a capped route and an
+            // uncapped one cannot share it. Refuse loudly instead of merging.
+            $capped = $this->assignmentIsCapped($assignmentId);
+
+            if ($throughRows !== [] && ! $capped) {
+                throw AssignmentRouteConflict::cappedOntoUncapped($roleName);
+            }
+
+            if ($throughRows === [] && $capped) {
+                throw AssignmentRouteConflict::uncappedOntoCapped($roleName);
+            }
         }
 
-        if ($throughRows !== [] && $user instanceof Model) {
-            $this->addThroughs($this->userTagPivotId($user, $tag->id, $scope), $throughRows);
+        if ($throughRows !== [] && $assignmentId !== null) {
+            $this->addThroughs($assignmentId, $throughRows);
         }
 
         $this->flushEffectivePermissions();
+    }
+
+    protected function assignmentIsCapped(int|string $assignmentId): bool
+    {
+        return Taggable::query()->getConnection()
+            ->table($this->throughsTable())
+            ->where('assignment_id', $assignmentId)
+            ->exists();
     }
 
     /**
@@ -1172,7 +1196,7 @@ class Permixion
         return $query->exists();
     }
 
-    protected function userTagPivotId(Model $user, int|string $tagId, ?Scope $scope): int|string
+    protected function userTagPivotId(Authorizable $user, int|string $tagId, ?Scope $scope): int|string|null
     {
         $query = Taggable::query()
             ->where('tag_id', $tagId)

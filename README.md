@@ -245,9 +245,25 @@ $agent->syncRoles(['bookkeeper'], $company);          // bookkeeper, still throu
 $agent->syncRoles(['viewer'], $company, ['drafter']); // throughs of its own, on every role listed
 ```
 
-To give the new role a different cap, `removeRole()` the old one first. One holder holds a role once per scope, so two
-*routes* to the same role (a direct membership and a capped firm route) are one
-assignment, capped by every through given — narrower, never wider.
+To give the new role a different cap, `removeRole()` the old one first.
+
+**Two routes to one role are refused, not merged.** A holder holds a role once per
+scope. So when a role is held uncapped (a direct membership), assigning it again
+through a holder or ceiling (a firm route) throws `AssignmentRouteConflict` —
+merging would silently cap the membership, and removing the firm route would
+remove both. The reverse (re-assigning a capped role with no through) throws too.
+Hold each route under its own role name, with the same permissions:
+
+```php
+Permixion::createRole('firm-bookkeeper', Permixion::getPermissionsForRole('bookkeeper'));
+
+$person->assignRole('bookkeeper', $company);                    // membership
+$person->assignRole('firm-bookkeeper', $company, [$firmGrant]); // firm route, capped by the grant
+$person->removeRole('firm-bookkeeper', $company);               // leaving the firm keeps the membership
+```
+
+Two capped routes to one role (assigning with throughs again) still add up: the
+assignment is capped by every through given — narrower, never wider.
 
 #### Inactive holders
 
