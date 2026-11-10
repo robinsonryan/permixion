@@ -1,0 +1,15 @@
+{
+  "engine": "codex",
+  "status": "reviewed",
+  "model": "gpt-6-astra",
+  "effort": "high",
+  "tokens": {
+    "input": 797092,
+    "cached_input": 696320,
+    "output": 6321,
+    "reasoning": 2793
+  },
+  "seconds": 221.0,
+  "reviewed_commit": "8d37460241364525c9f11ff8a787aee45544b8da",
+  "run_at": "2026-11-10T17:47:07Z"
+}

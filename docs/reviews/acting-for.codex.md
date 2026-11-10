@@ -1,0 +1,53 @@
+# Codex second review — acting-for
+
+**Verdict:** 5 findings; worst severity: blocker.
+
+**Invariant:** does not hold — Read the diff chore/stack-layers..feat/acting-for at 8d37460, CLAUDE.md, the spec, and Pennywise's four reference files. Used nl, sed and rg to trace authorization through the engine, trait, middleware, Blade and Laravel's installed Gate implementation. Bare and array scope extraction agree, but Gate fallback can grant from another scope; role checks bypass ceilings; assignment writes expose uncapped intermediate states. Reviewed simplification, abstraction and reuse without additional findings; this module adds no frontend surface. The tests contain meaningful grant/refusal assertions, but the builder's unobserved red phase leaves their ability to detect the preimplementation defects unproven. All findings below are substantiated by source inspection, not runtime reproduction.
+
+| id | severity | file:line | summary | scope | dimension | verified by run |
+|---|---|---|---|---|---|---|
+| c1 | blocker | src/Traits/HasRoles.php:105 | Role authorization and permission enumeration bypass ceilings and inactive-holder checks. | module | 1 | no |
+| c2 | blocker | src/PermixionServiceProvider.php:147 | Gate fallback can override an explicit-scope denial with an ambient-scope grant. | module | 1 | no |
+| c3 | major | src/Permixion.php:707 | Assignment creation and removal expose roles without their required throughs. | module | 1 | no |
+| c4 | major | src/Permixion.php:712 | Independent routes to the same role are intersected, losing legitimate Pennywise access. | module | 1 | no |
+| c5 | major | tests/TestCase.php:42 | The main suite and new fixture schema still use bigint keys instead of database-generated UUIDv7. | module | 5 | no |
+
+## c1 — Role authorization and permission enumeration bypass ceilings and inactive-holder checks.
+
+**Failure scenario:** A holder assigned accountant through a viewer has hasPermissionTo('ledger.close') == false, but hasRole('accountant') == true. RoleMiddleware and RoleOrPermissionMiddleware consequently admit it to accountant-protected actions, including after revocation. Role Blade directives also grant, and getAllPermissions() still lists ledger.close.
+
+**Evidence:** HasRoles::hasRole delegates to Permixion::userHasRole, whose lines 648–663 only test assignment existence. Both role middleware classes consume that result; provider lines 100–109 use it for Blade. HasRoles::getAllPermissions at lines 399–410 unions raw role permissions without consulting effectivePermissionsFor. The known gap therefore reaches actual authorization entry points.
+
+**Direction:** Apply effective authorization semantics to role-based guards and permission enumeration. If consumers need raw assignment metadata, expose it distinctly. Add capped and inactive-holder refusal tests through middleware, Blade and enumeration.
+
+## c2 — Gate fallback can override an explicit-scope denial with an ambient-scope grant.
+
+**Failure scenario:** An Authenticatable holder implementing HasPermissions can post in ambient team A but is capped to viewer in team B. Calling can('ledger.post', teamB) first denies in B, then delegates to parent::can. The Gate hook checks A and returns true. The array form leaks identically.
+
+**Evidence:** HasRoles lines 317–323 extract the explicit scope but fall back after denial. Laravel's installed Authorizable::can calls Gate::forUser(...)->check. The provider resolves only ambient scope at line 147 and grants at lines 166–167. CanMethodTest's new scope-refusal tests use the trait-only User fixture, which does not enter this hook.
+
+**Direction:** Preserve explicit Scope arguments through the Gate path while retaining policy-subject handling. Test both argument forms with a HasPermissions Authenticatable holder whose ambient scope grants and explicit scope denies.
+
+## c3 — Assignment creation and removal expose roles without their required throughs.
+
+**Failure scenario:** During assignRole('accountant', scope, [viewer]), a concurrent request reads the newly committed assignment before its through row is inserted and grants ledger.close. Removal has the same exposure: through rows are deleted before the assignment. A failure between those statements can leave the overgrant persistent.
+
+**Evidence:** attachRoleToUser attaches at line 708 and adds throughs at line 712 without a transaction. deleteUserTagPivot deletes throughs at lines 989–992 before deleting the assignment at line 994. computeEffective reads assignments and throughs separately at lines 437–438 and treats missing through rows as unrestricted at line 445. Laravel's attach implementation does not wrap these package operations in a transaction.
+
+**Direction:** Make assignment and through mutations atomic, and make authorization reads observe a consistent assignment/through snapshot. Atomic writes alone do not prevent a reader from fetching an assignment before removal and its throughs afterward. Cover interrupted writes and concurrent reads.
+
+## c4 — Independent routes to the same role are intersected, losing legitimate Pennywise access.
+
+**Failure scenario:** A person has a direct bookkeeper Membership and a Firm assignment of bookkeeper capped by a viewer grant. Pennywise preserves bookkeeper access; Permixion caps the shared assignment to viewer. Revoking the Firm grant removes even the independent Membership's read access.
+
+**Evidence:** attachRoleToUser reuses the existing holder/role/scope pivot and adds all throughs to it. computeEffective intersects those throughs. Pennywise User::roleOn independently collects routes and takes their higher role. PennywiseParityTest lines 373–382 explicitly assert differing answers, while its main comparison skips same-role Membership/Firm combinations.
+
+**Direction:** Treat this as a parity blocker despite failing closed. Prefer explicitly identified routes whose results are unioned, preserving intersection within each route and existing re-assignment/sync narrowing guarantees. A separate holder only solves it if its result is explicitly unioned into the user's rights; another through still intersects.
+
+## c5 — The main suite and new fixture schema still use bigint keys instead of database-generated UUIDv7.
+
+**Failure scenario:** The acting-for and Pennywise parity suites run with taxon.id_type='incrementing'. Their holders and the new through table therefore use bigint primary keys, leaving the full authorization matrix untested against the mandated UUIDv7 schema.
+
+**Evidence:** TestCase line 42 forces incrementing identifiers. Both new fixture migrations use $table->id(). The through-table migration lines 31–41 also selects a bigint primary key in that mode. The separate UUID7 suite covers only a subset. DDEV correctly pins PostgreSQL 18, matching core/universal/data-defaults.yaml, but the primary-key requirement remains unmet.
+
+**Direction:** Run the main feature and parity suites with database-generated UUIDv7 keys and matching fixture models. Give the package-owned through table a UUIDv7 primary key independently of the key types it references.
