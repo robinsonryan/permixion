@@ -21,8 +21,9 @@ use Illuminate\Support\Facades\Schema;
  * assignment; a row orphaned some other way names an assignment id that is never
  * reused and so grants nothing.
  *
- * Key types follow `taxon.id_type`, because `assignment_id` and `role_id` hold
- * Taxon's keys. `holder_id` is a string: a holder may be keyed by anything.
+ * The table's own key is a database-generated UUID v7 in both key modes. The
+ * columns that hold Taxon's keys, `assignment_id` and `role_id`, follow
+ * `taxon.id_type`. `holder_id` is a string: a holder may be keyed by anything.
  */
 return new class extends Migration
 {
@@ -31,12 +32,12 @@ return new class extends Migration
         $useUuid = config('taxon.id_type') === 'uuid7';
 
         Schema::create($this->table(), function (Blueprint $table) use ($useUuid): void {
+            $table->uuid('id')->primary()->default(DB::raw('uuidv7()'));
+
             if ($useUuid) {
-                $table->uuid('id')->primary()->default(DB::raw('uuidv7()'));
                 $table->uuid('assignment_id')->index();
                 $table->uuid('role_id')->nullable();
             } else {
-                $table->id();
                 $table->unsignedBigInteger('assignment_id')->index();
                 $table->unsignedBigInteger('role_id')->nullable();
             }

@@ -77,7 +77,10 @@ before upgrading.
   is capped by every through: a holder model (what it may do in the same scope,
   recursively) or a ceiling role (name or `Role`). Stored in a new table,
   `permixion_assignment_throughs`; **run `php artisan migrate`**. Its migration
-  loads automatically, or publish it with `--tag=permixion-migrations`.
+  loads automatically, or publish it with `--tag=permixion-migrations`. The
+  table's own primary key is a database-generated UUID v7 (`uuidv7()`, so
+  PostgreSQL 18) whatever `taxon.id_type` is; its `assignment_id` / `role_id`
+  follow `taxon.id_type`.
 - `effectivePermissions(?Scope $scope = null): Collection` on `HasRoles` and the
   `HasPermissions` contract; `Permixion::effectivePermissionsFor(Model, ?Scope):
   EffectivePermissions` on the engine.

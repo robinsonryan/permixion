@@ -73,6 +73,17 @@ describe('storing throughs with an assignment', function (): void {
         ]);
     });
 
+    it('keys a through row by a database-generated UUID v7, even with incrementing taxon keys', function (): void {
+        expect(config('taxon.id_type'))->toBe('incrementing');
+
+        $this->agent->assignRole('accountant', $this->team, [$this->owner]);
+
+        $row = DB::table('permixion_assignment_throughs')->first();
+
+        expect($row->id)->toBeUuidV7()
+            ->and(is_int($row->assignment_id))->toBeTrue();
+    });
+
     it('stores a ceiling role through against the assignment row', function (): void {
         $this->agent->assignRole('accountant', $this->team, ['drafter']);
 
