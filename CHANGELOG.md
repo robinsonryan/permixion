@@ -85,6 +85,10 @@ before upgrading.
   inactive holder has no permissions and caps everything acting through it.
 - `withCeiling(string|Role $role): static` — an immutable, request-scoped copy of
   the holder capped at a role.
+- An assignment and its throughs are written in one transaction (assign,
+  remove, sync), and read back in one statement, so an assignment is never
+  stored — or seen mid-removal — without its throughs. A missing through row
+  reads as "uncapped", so either would have widened.
 - Config `permixion.through.max_depth` (default 5) and
   `permixion.tables.assignment_throughs`.
 - `Permixion::scopeFromArguments()` and `Permixion::flushEffectivePermissions()`.

@@ -712,3 +712,73 @@ describe('the engine and the scope sentinels', function (): void {
         expect($this->agent->effectivePermissions($this->team))->toBeEmpty();
     });
 });
+
+describe('atomic writes and a consistent read', function (): void {
+    /*
+    | An absent through row reads as "uncapped". So an assignment must never be
+    | stored, or read, without the throughs it carries. The failures below are
+    | injected by a query listener: it runs after a statement has executed, so
+    | throwing from it is a failure between two writes.
+    */
+
+    it('a failure after the assignment row is written leaves no assignment behind', function (): void {
+        $armed = true;
+        DB::listen(function ($query) use (&$armed): void {
+            if ($armed && str_starts_with($query->sql, 'insert into "taggables"')) {
+                $armed = false;
+
+                throw new RuntimeException('injected: failure between the assignment and its throughs');
+            }
+        });
+
+        expect(fn () => $this->agent->assignRole('accountant', $this->team, ['viewer']))
+            ->toThrow(RuntimeException::class, 'injected');
+
+        Permixion::flushEffectivePermissions();
+
+        expect($this->agent->getAssignedRoleNames($this->team))->toBe([])
+            ->and($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse()
+            ->and($this->agent->hasPermissionTo('ledger.read', $this->team))->toBeFalse();
+    });
+
+    it('a failure after the throughs are deleted leaves the assignment capped', function (): void {
+        $this->agent->assignRole('accountant', $this->team, ['viewer']);
+
+        $armed = true;
+        DB::listen(function ($query) use (&$armed): void {
+            if ($armed && str_starts_with($query->sql, 'delete from "permixion_assignment_throughs"')) {
+                $armed = false;
+
+                throw new RuntimeException('injected: failure between deleting the throughs and the assignment');
+            }
+        });
+
+        expect(fn () => $this->agent->removeRole('accountant', $this->team))
+            ->toThrow(RuntimeException::class, 'injected');
+
+        Permixion::flushEffectivePermissions();
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse()
+            ->and($this->agent->hasPermissionTo('ledger.read', $this->team))->toBeTrue();
+    });
+
+    it('a removal committed while permissions are being read never reads as uncapped', function (): void {
+        $this->agent->assignRole('accountant', $this->team, ['viewer']);
+        Permixion::flushEffectivePermissions();
+
+        // Another process removes the assignment (throughs and row together, as
+        // one commit) just after this one has read the holder's assignments.
+        $armed = true;
+        DB::listen(function ($query) use (&$armed): void {
+            if ($armed && str_contains($query->sql, 'as "assignment_id"')) {
+                $armed = false;
+
+                $ids = DB::table('taggables')->where('taggable_id', $this->agent->getKey())->pluck('id');
+                DB::table('permixion_assignment_throughs')->whereIn('assignment_id', $ids)->delete();
+                DB::table('taggables')->whereIn('id', $ids)->delete();
+            }
+        });
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+    });
+});

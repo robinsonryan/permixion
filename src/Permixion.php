@@ -570,18 +570,64 @@ class Permixion
      * The holder's role assignments readable in $scope (or stored in exactly
      * $scope, for a write), each with its throughs.
      *
-     * @return array<int, stdClass> rows of {assignment_id, name, throughs}
+     * One statement, so one snapshot: an assignment is never seen without the
+     * throughs it had when it was read. Two reads would let a removal that
+     * commits between them show the assignment with no throughs — uncapped.
+     *
+     * @return array<int, stdClass> rows of {assignment_id, name, throughs: rows of {holder_type, holder_id, role_id, role_name}}
      */
     protected function roleAssignments(Model $holder, ?Scope $scope, bool $exact = false): array
     {
-        $assignments = $this->holderTagRows($holder, $this->rolesCategory(), $scope, $exact);
-        $throughs = $this->throughRowsFor(array_map(fn (stdClass $row): int|string => $row->assignment_id, $assignments));
+        $pivotTable = config('taxon.tables.taggables', 'taggables');
+        $tagTable = config('taxon.tables.tags', 'tags');
+        $throughTable = $this->throughsTable();
 
-        foreach ($assignments as $assignment) {
-            $assignment->throughs = $throughs[(string) $assignment->assignment_id] ?? [];
+        $query = Taggable::query()
+            ->join($tagTable, "{$tagTable}.id", '=', "{$pivotTable}.tag_id")
+            ->leftJoin($throughTable, "{$throughTable}.assignment_id", '=', "{$pivotTable}.id")
+            ->leftJoin("{$tagTable} as permixion_ceiling", 'permixion_ceiling.id', '=', "{$throughTable}.role_id")
+            ->where("{$pivotTable}.taggable_type", $holder->getMorphClass())
+            ->where("{$pivotTable}.taggable_id", $holder->getKey())
+            ->where("{$tagTable}.parent_id", $this->rolesCategory()->getKey());
+
+        if ($exact) {
+            $this->applyScopeToPivot($query, $pivotTable, $scope);
+        } else {
+            $this->applyReadScopeToPivot($query, $pivotTable, $scope);
         }
 
-        return $assignments;
+        $rows = $query->toBase()->get([
+            "{$pivotTable}.id as assignment_id",
+            "{$tagTable}.name as name",
+            "{$throughTable}.id as through_id",
+            "{$throughTable}.holder_type",
+            "{$throughTable}.holder_id",
+            "{$throughTable}.role_id",
+            'permixion_ceiling.name as role_name',
+        ]);
+
+        $assignments = [];
+
+        foreach ($rows as $row) {
+            $key = (string) $row->assignment_id;
+
+            $assignments[$key] ??= (object) [
+                'assignment_id' => $row->assignment_id,
+                'name' => $row->name,
+                'throughs' => [],
+            ];
+
+            if ($row->through_id !== null) {
+                $assignments[$key]->throughs[] = (object) [
+                    'holder_type' => $row->holder_type,
+                    'holder_id' => $row->holder_id,
+                    'role_id' => $row->role_id,
+                    'role_name' => $row->role_name,
+                ];
+            }
+        }
+
+        return array_values($assignments);
     }
 
     protected function isActiveHolder(Model $holder): bool
@@ -611,7 +657,7 @@ class Permixion
      *
      * @return array<int, stdClass> rows of {assignment_id, name}
      */
-    protected function holderTagRows(Model $holder, Tag $category, ?Scope $scope, bool $exact = false): array
+    protected function holderTagRows(Model $holder, Tag $category, ?Scope $scope): array
     {
         $pivotTable = config('taxon.tables.taggables', 'taggables');
         $tagTable = config('taxon.tables.tags', 'tags');
@@ -622,51 +668,11 @@ class Permixion
             ->where("{$pivotTable}.taggable_id", $holder->getKey())
             ->where("{$tagTable}.parent_id", $category->getKey());
 
-        if ($exact) {
-            $this->applyScopeToPivot($query, $pivotTable, $scope);
-        } else {
-            $this->applyReadScopeToPivot($query, $pivotTable, $scope);
-        }
+        $this->applyReadScopeToPivot($query, $pivotTable, $scope);
 
         return $query->toBase()
             ->get(["{$pivotTable}.id as assignment_id", "{$tagTable}.name as name"])
             ->all();
-    }
-
-    /**
-     * Through rows for the given assignments, grouped by assignment id.
-     *
-     * @param  array<int, int|string>  $assignmentIds
-     * @return array<string, array<int, stdClass>> rows of {assignment_id, holder_type, holder_id, role_id, role_name}
-     */
-    protected function throughRowsFor(array $assignmentIds): array
-    {
-        if ($assignmentIds === []) {
-            return [];
-        }
-
-        $throughTable = $this->throughsTable();
-        $tagTable = config('taxon.tables.tags', 'tags');
-
-        $rows = Taggable::query()->getConnection()
-            ->table($throughTable)
-            ->leftJoin($tagTable, "{$tagTable}.id", '=', "{$throughTable}.role_id")
-            ->whereIn("{$throughTable}.assignment_id", $assignmentIds)
-            ->get([
-                "{$throughTable}.assignment_id",
-                "{$throughTable}.holder_type",
-                "{$throughTable}.holder_id",
-                "{$throughTable}.role_id",
-                "{$tagTable}.name as role_name",
-            ]);
-
-        $grouped = [];
-
-        foreach ($rows as $row) {
-            $grouped[(string) $row->assignment_id][] = $row;
-        }
-
-        return $grouped;
     }
 
     protected function throughsTable(): string
@@ -913,28 +919,32 @@ class Permixion
                 ?? $this->createRole($roleName)->tag();
         }
 
-        $assignmentId = $this->userTagPivotId($user, $tag->id, $scope);
-
-        if ($assignmentId === null) {
-            $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+        // The assignment and its throughs are one write: an assignment stored
+        // without the throughs it was given would read as uncapped.
+        Taggable::query()->getConnection()->transaction(function () use ($user, $tag, $roleName, $scope, $throughRows): void {
             $assignmentId = $this->userTagPivotId($user, $tag->id, $scope);
-        } else {
-            // One assignment per holder, role and scope: a capped route and an
-            // uncapped one cannot share it. Refuse loudly instead of merging.
-            $capped = $this->assignmentIsCapped($assignmentId);
 
-            if ($throughRows !== [] && ! $capped) {
-                throw AssignmentRouteConflict::cappedOntoUncapped($roleName);
+            if ($assignmentId === null) {
+                $user->tags()->attach($tag->id, $this->scopePivotData($scope));
+                $assignmentId = $this->userTagPivotId($user, $tag->id, $scope);
+            } else {
+                // One assignment per holder, role and scope: a capped route and an
+                // uncapped one cannot share it. Refuse loudly instead of merging.
+                $capped = $this->assignmentIsCapped($assignmentId);
+
+                if ($throughRows !== [] && ! $capped) {
+                    throw AssignmentRouteConflict::cappedOntoUncapped($roleName);
+                }
+
+                if ($throughRows === [] && $capped) {
+                    throw AssignmentRouteConflict::uncappedOntoCapped($roleName);
+                }
             }
 
-            if ($throughRows === [] && $capped) {
-                throw AssignmentRouteConflict::uncappedOntoCapped($roleName);
+            if ($throughRows !== [] && $assignmentId !== null) {
+                $this->addThroughs($assignmentId, $throughRows);
             }
-        }
-
-        if ($throughRows !== [] && $assignmentId !== null) {
-            $this->addThroughs($assignmentId, $throughRows);
-        }
+        });
 
         $this->flushEffectivePermissions();
     }
@@ -1217,13 +1227,16 @@ class Permixion
 
         $this->applyScopeToPivot($query, $query->getModel()->getTable(), $scope);
 
-        // An assignment's throughs go with it (there is no foreign key to cascade).
-        $query->getConnection()
-            ->table($this->throughsTable())
-            ->whereIn('assignment_id', (clone $query)->toBase()->pluck('id')->all())
-            ->delete();
+        // An assignment's throughs go with it (there is no foreign key to
+        // cascade), in one transaction: the row must never outlive its throughs.
+        $query->getConnection()->transaction(function () use ($query): void {
+            $query->getConnection()
+                ->table($this->throughsTable())
+                ->whereIn('assignment_id', (clone $query)->toBase()->pluck('id')->all())
+                ->delete();
 
-        $query->delete();
+            $query->delete();
+        });
 
         $this->flushEffectivePermissions();
     }
