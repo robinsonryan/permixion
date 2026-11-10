@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > to `>=0.4.0 <0.5.0`, so **every minor release may break** — which is the point.
 > It will go to `1.0.0` when the consuming apps ship publicly.
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-11-10
 
 Acting for: assignments capped by the holders and roles they act through. A
 **minor** release because two authorization outcomes change — read *Changed*
