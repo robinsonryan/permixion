@@ -159,6 +159,16 @@ describe('storing throughs with an assignment', function (): void {
         expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.draft', 'ledger.read']);
     });
 
+    it('re-assigning with a WIDER through after a narrow one adds it — the narrow cap stays', function (): void {
+        // Reverse order of the case above: here "added" and "replaced" disagree.
+        $this->agent->assignRole('accountant', $this->team, ['viewer']);
+        $this->agent->assignRole('accountant', $this->team, ['bookkeeper']);
+
+        expect(sortedNames($this->agent->effectivePermissions($this->team)))->toBe(['ledger.read'])
+            ->and($this->agent->hasPermissionTo('ledger.post', $this->team))->toBeFalse()
+            ->and(DB::table('permixion_assignment_throughs')->count())->toBe(2);
+    });
+
     it('syncRoles keeps the cap on a role it retains', function (): void {
         $this->agent->assignRole('accountant', $this->team, ['drafter']);
 
@@ -381,6 +391,45 @@ describe('effective permissions', function (): void {
 
         expect($this->agent->hasPermissionTo('ledger.read', $this->team))->toBeTrue()
             ->and($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+    });
+
+    it('sees a direct permission given earlier in the same request', function (): void {
+        expect($this->agent->hasPermissionTo('reports.view', $this->team))->toBeFalse();
+
+        $this->agent->givePermissionTo('reports.view', $this->team);
+
+        expect($this->agent->hasPermissionTo('reports.view', $this->team))->toBeTrue();
+    });
+
+    it('sees a direct permission given to a through holder earlier in the same request', function (): void {
+        $this->agent->assignRole('accountant', $this->team, [$this->owner]);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+
+        $this->owner->givePermissionTo('ledger.close', $this->team);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+    });
+
+    it('a config change mid-request is not answered from the memo', function (): void {
+        $this->agent->assignRole('accountant', GlobalScope::instance());
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
+
+        config()->set('permixion.teams.global_fallback', true);
+
+        expect($this->agent->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        Permixion::createPermission('ledger.*');
+        Permixion::createRole('ledger-admin', ['ledger.*']);
+        $other = Agent::create(['name' => 'Other']);
+        $other->assignRole('ledger-admin', $this->team);
+
+        expect($other->hasPermissionTo('ledger.close', $this->team))->toBeTrue();
+
+        config()->set('permixion.wildcards.enabled', false);
+
+        expect($other->hasPermissionTo('ledger.close', $this->team))->toBeFalse();
     });
 
     it('sees a role\'s permissions change made earlier in the same request', function (): void {
